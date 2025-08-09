@@ -31,4 +31,7 @@ go.work.sum
 # .idea/
 # .vscode/
 
+# Runtime objects directory
+.runtime/
+
 config.json

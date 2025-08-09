@@ -2,6 +2,7 @@ package common
 
 import (
 	"go4pack/pkg/common/config"
+	"go4pack/pkg/common/fs"
 	"go4pack/pkg/common/logger"
 
 	"github.com/rs/zerolog"
@@ -53,4 +54,14 @@ func GetConfig() *config.Config {
 // IsDebug returns whether debug mode is enabled
 func IsDebug() bool {
 	return config.IsDebug()
+}
+
+// GetFileSystem returns a new filesystem instance
+func GetFileSystem() (*fs.FileSystem, error) {
+	return fs.New()
+}
+
+// GetFileSystemWithPath returns a new filesystem instance with custom base path
+func GetFileSystemWithPath(basePath string) (*fs.FileSystem, error) {
+	return fs.NewWithBasePath(basePath)
 }
