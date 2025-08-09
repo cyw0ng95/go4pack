@@ -77,15 +77,28 @@ func (fsys *FileSystem) SetCompressor(compressor compress.Compressor) {
 	fsys.compressor = compressor
 }
 
-// WriteObject writes data to a file in the objects directory with compression
+// WriteObject writes data to a file in the objects directory with compression unless data already compressed.
 func (fsys *FileSystem) WriteObject(filename string, data []byte) error {
+	// Avoid double compression: if detectable format, store raw.
+	if ct := compress.IsCompressed(data); ct != compress.None {
+		objectPath := filepath.Join(fsys.objectsPath, filename)
+		return afero.WriteFile(fsys.fs, objectPath, data, 0644)
+	}
 	compressedData, err := fsys.compressor.Compress(data)
 	if err != nil {
 		return fmt.Errorf("failed to compress data: %w", err)
 	}
-
 	objectPath := filepath.Join(fsys.objectsPath, filename)
 	return afero.WriteFile(fsys.fs, objectPath, compressedData, 0644)
+}
+
+// WriteObjectWithMIME writes data, skipping compression if already compressed per magic or MIME.
+func (fsys *FileSystem) WriteObjectWithMIME(filename string, data []byte, mime string) error {
+	if ct := compress.IsCompressedOrMIME(data, mime); ct != compress.None {
+		objectPath := filepath.Join(fsys.objectsPath, filename)
+		return afero.WriteFile(fsys.fs, objectPath, data, 0644)
+	}
+	return fsys.WriteObject(filename, data)
 }
 
 // ReadObject reads data from a file in the objects directory with decompression
@@ -95,18 +108,13 @@ func (fsys *FileSystem) ReadObject(filename string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-
-	// Try to detect if the data is compressed
+	// detect explicit formats first
 	detectedType := compress.IsCompressed(compressedData)
-
-	// If the data appears to be compressed but we're using a none compressor,
-	// or if the detected type matches our compressor type, decompress it
 	if detectedType != compress.None {
 		return compress.DecompressWithType(compressedData, detectedType)
 	}
-
-	// Otherwise, use our configured compressor to decompress
-	return fsys.compressor.Decompress(compressedData)
+	// fallback (may already be uncompressed)
+	return fsys.safeDecompress(compressedData)
 }
 
 // DeleteObject deletes a file from the objects directory
@@ -172,21 +180,20 @@ func (fsys *FileSystem) CreateObjectDir(dirname string) error {
 	return fsys.fs.MkdirAll(dirPath, 0755)
 }
 
-// WriteObjectToDir writes data to a file in a subdirectory of objects with compression
+// WriteObjectToDir writes data to a file in a subdirectory of objects with compression unless already compressed.
 func (fsys *FileSystem) WriteObjectToDir(dirname, filename string, data []byte) error {
 	dirPath := filepath.Join(fsys.objectsPath, dirname)
-
-	// Ensure directory exists
 	if err := fsys.fs.MkdirAll(dirPath, 0755); err != nil {
 		return fmt.Errorf("failed to create object directory: %w", err)
 	}
-
+	objectPath := filepath.Join(dirPath, filename)
+	if ct := compress.IsCompressed(data); ct != compress.None {
+		return afero.WriteFile(fsys.fs, objectPath, data, 0644)
+	}
 	compressedData, err := fsys.compressor.Compress(data)
 	if err != nil {
 		return fmt.Errorf("failed to compress data: %w", err)
 	}
-
-	objectPath := filepath.Join(dirPath, filename)
 	return afero.WriteFile(fsys.fs, objectPath, compressedData, 0644)
 }
 
@@ -197,18 +204,11 @@ func (fsys *FileSystem) ReadObjectFromDir(dirname, filename string) ([]byte, err
 	if err != nil {
 		return nil, err
 	}
-
-	// Try to detect if the data is compressed
 	detectedType := compress.IsCompressed(compressedData)
-
-	// If the data appears to be compressed but we're using a none compressor,
-	// or if the detected type matches our compressor type, decompress it
 	if detectedType != compress.None {
 		return compress.DecompressWithType(compressedData, detectedType)
 	}
-
-	// Otherwise, use our configured compressor to decompress
-	return fsys.compressor.Decompress(compressedData)
+	return fsys.safeDecompress(compressedData)
 }
 
 // CleanObjects removes all files from the objects directory
@@ -254,7 +254,7 @@ func (fsys *FileSystem) hashedPath(hash string) string {
 	return filepath.Join(fsys.objectsPath, hash[:2], hash)
 }
 
-// WriteObjectHashed stores data under a path derived from its hash (first 2 chars create a subdirectory).
+// WriteObjectHashed stores data under a path derived from its hash with compression unless data already compressed.
 // If the file already exists, it is left untouched.
 func (fsys *FileSystem) WriteObjectHashed(hash string, data []byte) error {
 	p := fsys.hashedPath(hash)
@@ -266,11 +266,45 @@ func (fsys *FileSystem) WriteObjectHashed(hash string, data []byte) error {
 	if exists, _ := afero.Exists(fsys.fs, p); exists {
 		return nil
 	}
+	if ct := compress.IsCompressed(data); ct != compress.None {
+		return afero.WriteFile(fsys.fs, p, data, 0644)
+	}
 	compressedData, err := fsys.compressor.Compress(data)
 	if err != nil {
 		return fmt.Errorf("failed to compress data: %w", err)
 	}
 	return afero.WriteFile(fsys.fs, p, compressedData, 0644)
+}
+
+// WriteObjectHashedWithMIME hashed write with MIME-aware double compression avoidance.
+func (fsys *FileSystem) WriteObjectHashedWithMIME(hash string, data []byte, mime string) error {
+	if ct := compress.IsCompressedOrMIME(data, mime); ct != compress.None {
+		return fsys.WriteObjectHashedRaw(hash, data)
+	}
+	return fsys.WriteObjectHashed(hash, data)
+}
+
+// WriteObjectHashedRaw stores data under its hash without applying additional compression (dedup aware).
+func (fsys *FileSystem) WriteObjectHashedRaw(hash string, data []byte) error {
+	p := fsys.hashedPath(hash)
+	dir := filepath.Dir(p)
+	if err := fsys.fs.MkdirAll(dir, 0755); err != nil {
+		return fmt.Errorf("failed to create hash directory: %w", err)
+	}
+	if exists, _ := afero.Exists(fsys.fs, p); exists {
+		return nil
+	}
+	return afero.WriteFile(fsys.fs, p, data, 0644)
+}
+
+// safeDecompress tries to decompress with current compressor; on failure returns original data.
+func (fsys *FileSystem) safeDecompress(data []byte) ([]byte, error) {
+	out, err := fsys.compressor.Decompress(data)
+	if err != nil {
+		// treat as uncompressed original
+		return data, nil
+	}
+	return out, nil
 }
 
 // ReadObjectHashed reads a hashed (content-addressed) object.
@@ -284,7 +318,7 @@ func (fsys *FileSystem) ReadObjectHashed(hash string) ([]byte, error) {
 	if detectedType != compress.None {
 		return compress.DecompressWithType(compressedData, detectedType)
 	}
-	return fsys.compressor.Decompress(compressedData)
+	return fsys.safeDecompress(compressedData)
 }
 
 // GetHashedObjectSize returns compressed size of hashed object.

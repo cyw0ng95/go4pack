@@ -71,8 +71,8 @@ func uploadHandler(c *gin.Context) {
 	md5sum := file.MD5Sum(data)
 	mimeType := file.DetectMIME(data, header.Filename)
 
-	// Content-addressed storage by MD5 (first 2 chars directory)
-	if err := fsys.WriteObjectHashed(md5sum, data); err != nil {
+	// Content-addressed storage by MD5 (first 2 chars directory) with MIME-based compression avoidance
+	if err := fsys.WriteObjectHashedWithMIME(md5sum, data, mimeType); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "store file failed"})
 		return
 	}

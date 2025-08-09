@@ -225,3 +225,30 @@ func IsCompressed(data []byte) CompressionType {
 
 	return None
 }
+
+var mimeCompressionMap = map[string]CompressionType{
+	"application/gzip":   Gzip,
+	"application/x-gzip": Gzip,
+	"application/zstd":   Zstd,
+	"application/x-zstd": Zstd,
+}
+
+// DetectCompressionByMIME returns the compression type inferred from MIME if known.
+func DetectCompressionByMIME(mime string) (CompressionType, bool) {
+	ct, ok := mimeCompressionMap[mime]
+	return ct, ok
+}
+
+// IsCompressedOrMIME first checks magic bytes, then MIME hint (if provided, empty mime ignored).
+func IsCompressedOrMIME(data []byte, mime string) CompressionType {
+	if ct := IsCompressed(data); ct != None {
+		return ct
+	}
+	if mime == "" {
+		return None
+	}
+	if ct, ok := DetectCompressionByMIME(mime); ok {
+		return ct
+	}
+	return None
+}
