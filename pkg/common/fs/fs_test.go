@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	
+	"go4pack/pkg/common/compress"
 )
 
 func TestNew(t *testing.T) {
@@ -280,12 +282,23 @@ func TestGetObjectInfo(t *testing.T) {
 		t.Errorf("Expected name %s, got %s", filename, info.Name())
 	}
 
-	if info.Size() != int64(len(testData)) {
-		t.Errorf("Expected size %d, got %d", len(testData), info.Size())
+	// Note: Size will be the compressed size, which may be different from original
+	if info.Size() <= 0 {
+		t.Errorf("Expected positive size, got %d", info.Size())
 	}
 
 	if info.IsDir() {
 		t.Error("Expected file, not directory")
+	}
+
+	// Test that we can get the original size too
+	originalSize, err := fsys.GetOriginalObjectSize(filename)
+	if err != nil {
+		t.Fatalf("Failed to get original object size: %v", err)
+	}
+
+	if originalSize != int64(len(testData)) {
+		t.Errorf("Expected original size %d, got %d", len(testData), originalSize)
 	}
 
 	// Test non-existent file
@@ -311,19 +324,34 @@ func TestGetObjectSize(t *testing.T) {
 		t.Fatalf("Failed to write object: %v", err)
 	}
 
-	// Get object size
-	size, err := fsys.GetObjectSize(filename)
+	// Get compressed object size
+	compressedSize, err := fsys.GetObjectSize(filename)
 	if err != nil {
 		t.Fatalf("Failed to get object size: %v", err)
 	}
 
+	if compressedSize <= 0 {
+		t.Errorf("Expected positive compressed size, got %d", compressedSize)
+	}
+
+	// Get original object size
+	originalSize, err := fsys.GetOriginalObjectSize(filename)
+	if err != nil {
+		t.Fatalf("Failed to get original object size: %v", err)
+	}
+
 	expectedSize := int64(len(testData))
-	if size != expectedSize {
-		t.Errorf("Expected size %d, got %d", expectedSize, size)
+	if originalSize != expectedSize {
+		t.Errorf("Expected original size %d, got %d", expectedSize, originalSize)
 	}
 
 	// Test non-existent file
 	_, err = fsys.GetObjectSize("nonexistent.txt")
+	if err == nil {
+		t.Error("Expected error for non-existent file")
+	}
+
+	_, err = fsys.GetOriginalObjectSize("nonexistent.txt")
 	if err == nil {
 		t.Error("Expected error for non-existent file")
 	}
@@ -577,5 +605,152 @@ func BenchmarkListObjects(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		fsys.ListObjects()
+	}
+}
+
+// Compression-related tests
+func TestNewWithCompression(t *testing.T) {
+	tempDir := t.TempDir()
+	gzipCompressor := compress.NewDefaultCompressor()
+	
+	fsys, err := NewWithBasePathAndCompression(tempDir, gzipCompressor)
+	if err != nil {
+		t.Fatalf("Failed to create filesystem with compression: %v", err)
+	}
+
+	if fsys.GetCompressor().Type() != compress.Gzip {
+		t.Errorf("Expected Gzip compressor, got %v", fsys.GetCompressor().Type())
+	}
+}
+
+func TestCompressionInWriteAndRead(t *testing.T) {
+	tempDir := t.TempDir()
+	
+	// Test with gzip compression
+	gzipCompressor := compress.NewDefaultCompressor()
+	fsys, err := NewWithBasePathAndCompression(tempDir, gzipCompressor)
+	if err != nil {
+		t.Fatalf("Failed to create filesystem: %v", err)
+	}
+
+	testData := []byte("This is test data that should be compressed using gzip compression algorithm.")
+	filename := "compressed_test.txt"
+
+	// Write object (should be compressed)
+	err = fsys.WriteObject(filename, testData)
+	if err != nil {
+		t.Fatalf("Failed to write compressed object: %v", err)
+	}
+
+	// Read object (should be decompressed)
+	readData, err := fsys.ReadObject(filename)
+	if err != nil {
+		t.Fatalf("Failed to read compressed object: %v", err)
+	}
+
+	if string(readData) != string(testData) {
+		t.Errorf("Expected %s, got %s", string(testData), string(readData))
+	}
+
+	// Verify that the stored data is actually compressed by checking file size
+	objectPath := filepath.Join(fsys.GetObjectsPath(), filename)
+	fileInfo, err := os.Stat(objectPath)
+	if err != nil {
+		t.Fatalf("Failed to stat object file: %v", err)
+	}
+
+	// For this test data, compressed size should be smaller than original
+	// (though for very small data, compression might actually increase size)
+	t.Logf("Original size: %d, Compressed file size: %d", len(testData), fileInfo.Size())
+}
+
+func TestCompressionNoneType(t *testing.T) {
+	tempDir := t.TempDir()
+	
+	// Test with no compression
+	noneCompressor := compress.NewNoneCompressor()
+	fsys, err := NewWithBasePathAndCompression(tempDir, noneCompressor)
+	if err != nil {
+		t.Fatalf("Failed to create filesystem: %v", err)
+	}
+
+	testData := []byte("This data should not be compressed.")
+	filename := "uncompressed_test.txt"
+
+	// Write object (should not be compressed)
+	err = fsys.WriteObject(filename, testData)
+	if err != nil {
+		t.Fatalf("Failed to write uncompressed object: %v", err)
+	}
+
+	// Read object (should return as-is)
+	readData, err := fsys.ReadObject(filename)
+	if err != nil {
+		t.Fatalf("Failed to read uncompressed object: %v", err)
+	}
+
+	if string(readData) != string(testData) {
+		t.Errorf("Expected %s, got %s", string(testData), string(readData))
+	}
+
+	// Verify that the stored data is not compressed by checking file size
+	objectPath := filepath.Join(fsys.GetObjectsPath(), filename)
+	fileInfo, err := os.Stat(objectPath)
+	if err != nil {
+		t.Fatalf("Failed to stat object file: %v", err)
+	}
+
+	if fileInfo.Size() != int64(len(testData)) {
+		t.Errorf("Expected file size %d, got %d", len(testData), fileInfo.Size())
+	}
+}
+
+func TestSetCompressor(t *testing.T) {
+	tempDir := t.TempDir()
+	fsys, err := NewWithBasePath(tempDir)
+	if err != nil {
+		t.Fatalf("Failed to create filesystem: %v", err)
+	}
+
+	// Initially should have default compressor (Gzip)
+	if fsys.GetCompressor().Type() != compress.Gzip {
+		t.Errorf("Expected default compressor to be Gzip, got %v", fsys.GetCompressor().Type())
+	}
+
+	// Change to no compression
+	noneCompressor := compress.NewNoneCompressor()
+	fsys.SetCompressor(noneCompressor)
+
+	if fsys.GetCompressor().Type() != compress.None {
+		t.Errorf("Expected None compressor after setting, got %v", fsys.GetCompressor().Type())
+	}
+}
+
+func TestCompressionWithDirectories(t *testing.T) {
+	tempDir := t.TempDir()
+	gzipCompressor := compress.NewDefaultCompressor()
+	fsys, err := NewWithBasePathAndCompression(tempDir, gzipCompressor)
+	if err != nil {
+		t.Fatalf("Failed to create filesystem: %v", err)
+	}
+
+	dirname := "compressed_subdir"
+	filename := "compressed_file.txt"
+	testData := []byte("This is test data in a subdirectory that should be compressed.")
+
+	// Write to subdirectory with compression
+	err = fsys.WriteObjectToDir(dirname, filename, testData)
+	if err != nil {
+		t.Fatalf("Failed to write compressed object to directory: %v", err)
+	}
+
+	// Read from subdirectory with decompression
+	readData, err := fsys.ReadObjectFromDir(dirname, filename)
+	if err != nil {
+		t.Fatalf("Failed to read compressed object from directory: %v", err)
+	}
+
+	if string(readData) != string(testData) {
+		t.Errorf("Expected %s, got %s", string(testData), string(readData))
 	}
 }

@@ -2,11 +2,11 @@ package fs
 
 import (
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 
 	"github.com/spf13/afero"
+	"go4pack/pkg/common/compress"
 )
 
 // FileSystem wraps Afero filesystem with runtime object management
@@ -14,6 +14,7 @@ type FileSystem struct {
 	fs          afero.Fs
 	runtimePath string
 	objectsPath string
+	compressor  compress.Compressor
 }
 
 // New creates a new filesystem instance with runtime directory management
@@ -23,6 +24,16 @@ func New() (*FileSystem, error) {
 
 // NewWithBasePath creates a new filesystem instance with custom base path
 func NewWithBasePath(basePath string) (*FileSystem, error) {
+	return NewWithBasePathAndCompression(basePath, compress.NewDefaultCompressor())
+}
+
+// NewWithCompression creates a new filesystem instance with custom compression
+func NewWithCompression(compressor compress.Compressor) (*FileSystem, error) {
+	return NewWithBasePathAndCompression(".", compressor)
+}
+
+// NewWithBasePathAndCompression creates a new filesystem instance with custom base path and compression
+func NewWithBasePathAndCompression(basePath string, compressor compress.Compressor) (*FileSystem, error) {
 	fs := afero.NewOsFs()
 	runtimePath := filepath.Join(basePath, ".runtime")
 	objectsPath := filepath.Join(runtimePath, "objects")
@@ -36,6 +47,7 @@ func NewWithBasePath(basePath string) (*FileSystem, error) {
 		fs:          fs,
 		runtimePath: runtimePath,
 		objectsPath: objectsPath,
+		compressor:  compressor,
 	}, nil
 }
 
@@ -54,16 +66,46 @@ func (fsys *FileSystem) GetObjectsPath() string {
 	return fsys.objectsPath
 }
 
-// WriteObject writes data to a file in the objects directory
-func (fsys *FileSystem) WriteObject(filename string, data []byte) error {
-	objectPath := filepath.Join(fsys.objectsPath, filename)
-	return afero.WriteFile(fsys.fs, objectPath, data, 0644)
+// GetCompressor returns the current compressor
+func (fsys *FileSystem) GetCompressor() compress.Compressor {
+	return fsys.compressor
 }
 
-// ReadObject reads data from a file in the objects directory
+// SetCompressor sets a new compressor for the filesystem
+func (fsys *FileSystem) SetCompressor(compressor compress.Compressor) {
+	fsys.compressor = compressor
+}
+
+// WriteObject writes data to a file in the objects directory with compression
+func (fsys *FileSystem) WriteObject(filename string, data []byte) error {
+	compressedData, err := fsys.compressor.Compress(data)
+	if err != nil {
+		return fmt.Errorf("failed to compress data: %w", err)
+	}
+
+	objectPath := filepath.Join(fsys.objectsPath, filename)
+	return afero.WriteFile(fsys.fs, objectPath, compressedData, 0644)
+}
+
+// ReadObject reads data from a file in the objects directory with decompression
 func (fsys *FileSystem) ReadObject(filename string) ([]byte, error) {
 	objectPath := filepath.Join(fsys.objectsPath, filename)
-	return afero.ReadFile(fsys.fs, objectPath)
+	compressedData, err := afero.ReadFile(fsys.fs, objectPath)
+	if err != nil {
+		return nil, err
+	}
+
+	// Try to detect if the data is compressed
+	detectedType := compress.IsCompressed(compressedData)
+	
+	// If the data appears to be compressed but we're using a none compressor,
+	// or if the detected type matches our compressor type, decompress it
+	if detectedType != compress.None {
+		return compress.DecompressWithType(compressedData, detectedType)
+	}
+	
+	// Otherwise, use our configured compressor to decompress
+	return fsys.compressor.Decompress(compressedData)
 }
 
 // DeleteObject deletes a file from the objects directory
@@ -101,15 +143,13 @@ func (fsys *FileSystem) GetObjectInfo(filename string) (os.FileInfo, error) {
 	return fsys.fs.Stat(objectPath)
 }
 
-// CopyObjectTo copies an object to another location
+// CopyObjectTo copies an object to another location (decompressed)
 func (fsys *FileSystem) CopyObjectTo(filename, destPath string) error {
-	objectPath := filepath.Join(fsys.objectsPath, filename)
-
-	srcFile, err := fsys.fs.Open(objectPath)
+	// Read the object data (this will decompress it)
+	data, err := fsys.ReadObject(filename)
 	if err != nil {
-		return fmt.Errorf("failed to open source object: %w", err)
+		return fmt.Errorf("failed to read source object: %w", err)
 	}
-	defer srcFile.Close()
 
 	destFile, err := fsys.fs.Create(destPath)
 	if err != nil {
@@ -117,9 +157,9 @@ func (fsys *FileSystem) CopyObjectTo(filename, destPath string) error {
 	}
 	defer destFile.Close()
 
-	_, err = io.Copy(destFile, srcFile)
+	_, err = destFile.Write(data)
 	if err != nil {
-		return fmt.Errorf("failed to copy object: %w", err)
+		return fmt.Errorf("failed to write to destination file: %w", err)
 	}
 
 	return nil
@@ -131,7 +171,7 @@ func (fsys *FileSystem) CreateObjectDir(dirname string) error {
 	return fsys.fs.MkdirAll(dirPath, 0755)
 }
 
-// WriteObjectToDir writes data to a file in a subdirectory of objects
+// WriteObjectToDir writes data to a file in a subdirectory of objects with compression
 func (fsys *FileSystem) WriteObjectToDir(dirname, filename string, data []byte) error {
 	dirPath := filepath.Join(fsys.objectsPath, dirname)
 
@@ -140,14 +180,34 @@ func (fsys *FileSystem) WriteObjectToDir(dirname, filename string, data []byte) 
 		return fmt.Errorf("failed to create object directory: %w", err)
 	}
 
+	compressedData, err := fsys.compressor.Compress(data)
+	if err != nil {
+		return fmt.Errorf("failed to compress data: %w", err)
+	}
+
 	objectPath := filepath.Join(dirPath, filename)
-	return afero.WriteFile(fsys.fs, objectPath, data, 0644)
+	return afero.WriteFile(fsys.fs, objectPath, compressedData, 0644)
 }
 
-// ReadObjectFromDir reads data from a file in a subdirectory of objects
+// ReadObjectFromDir reads data from a file in a subdirectory of objects with decompression
 func (fsys *FileSystem) ReadObjectFromDir(dirname, filename string) ([]byte, error) {
 	objectPath := filepath.Join(fsys.objectsPath, dirname, filename)
-	return afero.ReadFile(fsys.fs, objectPath)
+	compressedData, err := afero.ReadFile(fsys.fs, objectPath)
+	if err != nil {
+		return nil, err
+	}
+
+	// Try to detect if the data is compressed
+	detectedType := compress.IsCompressed(compressedData)
+	
+	// If the data appears to be compressed but we're using a none compressor,
+	// or if the detected type matches our compressor type, decompress it
+	if detectedType != compress.None {
+		return compress.DecompressWithType(compressedData, detectedType)
+	}
+	
+	// Otherwise, use our configured compressor to decompress
+	return fsys.compressor.Decompress(compressedData)
 }
 
 // CleanObjects removes all files from the objects directory
@@ -167,11 +227,20 @@ func (fsys *FileSystem) CleanObjects() error {
 	return nil
 }
 
-// GetObjectSize returns the size of an object file
+// GetObjectSize returns the size of an object file (compressed size on disk)
 func (fsys *FileSystem) GetObjectSize(filename string) (int64, error) {
 	info, err := fsys.GetObjectInfo(filename)
 	if err != nil {
 		return 0, err
 	}
 	return info.Size(), nil
+}
+
+// GetOriginalObjectSize returns the uncompressed size of an object
+func (fsys *FileSystem) GetOriginalObjectSize(filename string) (int64, error) {
+	data, err := fsys.ReadObject(filename)
+	if err != nil {
+		return 0, err
+	}
+	return int64(len(data)), nil
 }

@@ -3,8 +3,6 @@ package fileio
 import (
 	"io"
 	"net/http"
-	"os"
-	"path/filepath"
 	"strconv"
 	"time"
 
@@ -18,12 +16,14 @@ import (
 
 // FileRecord represents a stored file metadata entry
 type FileRecord struct {
-	ID        uint           `gorm:"primaryKey" json:"id"`
-	Filename  string         `gorm:"uniqueIndex;size:255" json:"filename"`
-	Size      int64          `json:"size"`
-	CreatedAt time.Time      `json:"created_at"`
-	UpdatedAt time.Time      `json:"updated_at"`
-	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`
+	ID             uint           `gorm:"primaryKey" json:"id"`
+	Filename       string         `gorm:"uniqueIndex;size:255" json:"filename"`
+	Size           int64          `json:"size"`           // Original uncompressed size
+	CompressedSize int64          `json:"compressed_size"` // Compressed size on disk
+	CompressionType string        `json:"compression_type"` // Type of compression used
+	CreatedAt      time.Time      `json:"created_at"`
+	UpdatedAt      time.Time      `json:"updated_at"`
+	DeletedAt      gorm.DeletedAt `gorm:"index" json:"-"`
 }
 
 // ensureDB migrates and returns db
@@ -39,6 +39,7 @@ func RegisterRoutes(rg *gin.RouterGroup) {
 	rg.POST("/upload", uploadHandler)
 	rg.GET("/download/:filename", downloadHandler)
 	rg.GET("/list", listHandler)
+	rg.GET("/stats", statsHandler)
 }
 
 func uploadHandler(c *gin.Context) {
@@ -61,14 +62,31 @@ func uploadHandler(c *gin.Context) {
 		return
 	}
 
+	originalSize := int64(len(data))
+
 	if err := fsys.WriteObject(header.Filename, data); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "save file failed"})
 		return
 	}
 
+	// Get compressed size from filesystem
+	compressedSize, err := fsys.GetObjectSize(header.Filename)
+	if err != nil {
+		logger.GetLogger().Warn().Err(err).Str("filename", header.Filename).Msg("failed to get compressed size")
+		compressedSize = originalSize // fallback to original size
+	}
+
+	// Get compression type
+	compressionType := fsys.GetCompressor().Type().String()
+
 	// Record metadata in database
 	if db, err := ensureDB(); err == nil {
-		rec := &FileRecord{Filename: header.Filename, Size: int64(len(data))}
+		rec := &FileRecord{
+			Filename:        header.Filename,
+			Size:            originalSize,
+			CompressedSize:  compressedSize,
+			CompressionType: compressionType,
+		}
 		if err := db.Create(rec).Error; err != nil {
 			logger.GetLogger().Error().Err(err).Str("filename", header.Filename).Msg("db create file record failed")
 		}
@@ -76,8 +94,20 @@ func uploadHandler(c *gin.Context) {
 		logger.GetLogger().Error().Err(err).Msg("db init failed")
 	}
 
-	logger.GetLogger().Info().Str("filename", header.Filename).Int("size", len(data)).Msg("file uploaded")
-	c.JSON(http.StatusOK, gin.H{"filename": header.Filename, "size": len(data)})
+	logger.GetLogger().Info().
+		Str("filename", header.Filename).
+		Int64("original_size", originalSize).
+		Int64("compressed_size", compressedSize).
+		Str("compression", compressionType).
+		Msg("file uploaded")
+
+	c.JSON(http.StatusOK, gin.H{
+		"filename":         header.Filename,
+		"original_size":    originalSize,
+		"compressed_size":  compressedSize,
+		"compression_type": compressionType,
+		"compression_ratio": float64(compressedSize) / float64(originalSize),
+	})
 }
 
 func downloadHandler(c *gin.Context) {
@@ -88,20 +118,37 @@ func downloadHandler(c *gin.Context) {
 		return
 	}
 
-	objectPath := filepath.Join(fsys.GetObjectsPath(), filename)
-	f, err := os.Open(objectPath)
+	// Check if file exists
+	exists, err := fsys.ObjectExists(filename)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "filesystem error"})
+		return
+	}
+	if !exists {
+		c.JSON(http.StatusNotFound, gin.H{"error": "file not found"})
+		return
+	}
+
+	// Read the object (this will automatically decompress it)
+	data, err := fsys.ReadObject(filename)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "file not found"})
 		return
 	}
-	defer f.Close()
 
-	stat, _ := f.Stat()
+	// Get original size for the response header
+	originalSize := int64(len(data))
+	
 	c.Header("Content-Disposition", "attachment; filename="+filename)
-	c.Header("Content-Length", strconv.FormatInt(stat.Size(), 10))
-	c.File(objectPath)
+	c.Header("Content-Length", strconv.FormatInt(originalSize, 10))
+	c.Header("Content-Type", "application/octet-stream")
+	
+	c.Data(http.StatusOK, "application/octet-stream", data)
 
-	logger.GetLogger().Info().Str("filename", filename).Int64("size", stat.Size()).Msg("file downloaded")
+	logger.GetLogger().Info().
+		Str("filename", filename).
+		Int64("size", originalSize).
+		Msg("file downloaded")
 }
 
 func listHandler(c *gin.Context) {
@@ -119,4 +166,52 @@ func listHandler(c *gin.Context) {
 
 	logger.GetLogger().Info().Int("count", len(files)).Msg("files listed")
 	c.JSON(http.StatusOK, gin.H{"files": files, "count": len(files)})
+}
+
+func statsHandler(c *gin.Context) {
+	db, err := ensureDB()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "database init failed"})
+		return
+	}
+
+	var files []FileRecord
+	if err := db.Find(&files).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "query files failed"})
+		return
+	}
+
+	// Calculate statistics
+	var totalOriginalSize, totalCompressedSize int64
+	var compressionStats = make(map[string]int)
+	
+	for _, file := range files {
+		totalOriginalSize += file.Size
+		totalCompressedSize += file.CompressedSize
+		compressionStats[file.CompressionType]++
+	}
+
+	var compressionRatio float64
+	if totalOriginalSize > 0 {
+		compressionRatio = float64(totalCompressedSize) / float64(totalOriginalSize)
+	}
+
+	spaceSaved := totalOriginalSize - totalCompressedSize
+
+	logger.GetLogger().Info().
+		Int("file_count", len(files)).
+		Int64("total_original_size", totalOriginalSize).
+		Int64("total_compressed_size", totalCompressedSize).
+		Float64("compression_ratio", compressionRatio).
+		Msg("compression stats requested")
+
+	c.JSON(http.StatusOK, gin.H{
+		"file_count":             len(files),
+		"total_original_size":    totalOriginalSize,
+		"total_compressed_size":  totalCompressedSize,
+		"compression_ratio":      compressionRatio,
+		"space_saved":           spaceSaved,
+		"space_saved_percentage": (float64(spaceSaved) / float64(totalOriginalSize)) * 100,
+		"compression_types":      compressionStats,
+	})
 }
