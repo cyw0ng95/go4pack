@@ -246,7 +246,7 @@ func TestWithFields(t *testing.T) {
 	testLogger.Info().Msg("Test fields message")
 
 	output := buf.String()
-	
+
 	// Parse JSON to verify fields
 	var logEntry map[string]interface{}
 	if err := json.Unmarshal([]byte(output), &logEntry); err != nil {
