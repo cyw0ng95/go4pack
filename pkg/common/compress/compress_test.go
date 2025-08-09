@@ -206,7 +206,7 @@ func BenchmarkGzipCompress(b *testing.B) {
 func BenchmarkGzipDecompress(b *testing.B) {
 	compressor := NewGzipCompressor(gzip.DefaultCompression)
 	testData := []byte(strings.Repeat("This is test data for benchmarking decompression performance. ", 1000))
-	
+
 	compressed, err := compressor.Compress(testData)
 	if err != nil {
 		b.Fatal(err)

@@ -16,14 +16,14 @@ import (
 
 // FileRecord represents a stored file metadata entry
 type FileRecord struct {
-	ID             uint           `gorm:"primaryKey" json:"id"`
-	Filename       string         `gorm:"uniqueIndex;size:255" json:"filename"`
-	Size           int64          `json:"size"`           // Original uncompressed size
-	CompressedSize int64          `json:"compressed_size"` // Compressed size on disk
-	CompressionType string        `json:"compression_type"` // Type of compression used
-	CreatedAt      time.Time      `json:"created_at"`
-	UpdatedAt      time.Time      `json:"updated_at"`
-	DeletedAt      gorm.DeletedAt `gorm:"index" json:"-"`
+	ID              uint           `gorm:"primaryKey" json:"id"`
+	Filename        string         `gorm:"uniqueIndex;size:255" json:"filename"`
+	Size            int64          `json:"size"`             // Original uncompressed size
+	CompressedSize  int64          `json:"compressed_size"`  // Compressed size on disk
+	CompressionType string         `json:"compression_type"` // Type of compression used
+	CreatedAt       time.Time      `json:"created_at"`
+	UpdatedAt       time.Time      `json:"updated_at"`
+	DeletedAt       gorm.DeletedAt `gorm:"index" json:"-"`
 }
 
 // ensureDB migrates and returns db
@@ -102,10 +102,10 @@ func uploadHandler(c *gin.Context) {
 		Msg("file uploaded")
 
 	c.JSON(http.StatusOK, gin.H{
-		"filename":         header.Filename,
-		"original_size":    originalSize,
-		"compressed_size":  compressedSize,
-		"compression_type": compressionType,
+		"filename":          header.Filename,
+		"original_size":     originalSize,
+		"compressed_size":   compressedSize,
+		"compression_type":  compressionType,
 		"compression_ratio": float64(compressedSize) / float64(originalSize),
 	})
 }
@@ -138,11 +138,11 @@ func downloadHandler(c *gin.Context) {
 
 	// Get original size for the response header
 	originalSize := int64(len(data))
-	
+
 	c.Header("Content-Disposition", "attachment; filename="+filename)
 	c.Header("Content-Length", strconv.FormatInt(originalSize, 10))
 	c.Header("Content-Type", "application/octet-stream")
-	
+
 	c.Data(http.StatusOK, "application/octet-stream", data)
 
 	logger.GetLogger().Info().
@@ -184,7 +184,7 @@ func statsHandler(c *gin.Context) {
 	// Calculate statistics
 	var totalOriginalSize, totalCompressedSize int64
 	var compressionStats = make(map[string]int)
-	
+
 	for _, file := range files {
 		totalOriginalSize += file.Size
 		totalCompressedSize += file.CompressedSize
@@ -210,7 +210,7 @@ func statsHandler(c *gin.Context) {
 		"total_original_size":    totalOriginalSize,
 		"total_compressed_size":  totalCompressedSize,
 		"compression_ratio":      compressionRatio,
-		"space_saved":           spaceSaved,
+		"space_saved":            spaceSaved,
 		"space_saved_percentage": (float64(spaceSaved) / float64(totalOriginalSize)) * 100,
 		"compression_types":      compressionStats,
 	})

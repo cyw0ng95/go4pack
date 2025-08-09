@@ -4,7 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-	
+
 	"go4pack/pkg/common/compress"
 )
 
@@ -612,7 +612,7 @@ func BenchmarkListObjects(b *testing.B) {
 func TestNewWithCompression(t *testing.T) {
 	tempDir := t.TempDir()
 	gzipCompressor := compress.NewDefaultCompressor()
-	
+
 	fsys, err := NewWithBasePathAndCompression(tempDir, gzipCompressor)
 	if err != nil {
 		t.Fatalf("Failed to create filesystem with compression: %v", err)
@@ -625,7 +625,7 @@ func TestNewWithCompression(t *testing.T) {
 
 func TestCompressionInWriteAndRead(t *testing.T) {
 	tempDir := t.TempDir()
-	
+
 	// Test with gzip compression
 	gzipCompressor := compress.NewDefaultCompressor()
 	fsys, err := NewWithBasePathAndCompression(tempDir, gzipCompressor)
@@ -666,7 +666,7 @@ func TestCompressionInWriteAndRead(t *testing.T) {
 
 func TestCompressionNoneType(t *testing.T) {
 	tempDir := t.TempDir()
-	
+
 	// Test with no compression
 	noneCompressor := compress.NewNoneCompressor()
 	fsys, err := NewWithBasePathAndCompression(tempDir, noneCompressor)

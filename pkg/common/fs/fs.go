@@ -5,8 +5,9 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/spf13/afero"
 	"go4pack/pkg/common/compress"
+
+	"github.com/spf13/afero"
 )
 
 // FileSystem wraps Afero filesystem with runtime object management
@@ -97,13 +98,13 @@ func (fsys *FileSystem) ReadObject(filename string) ([]byte, error) {
 
 	// Try to detect if the data is compressed
 	detectedType := compress.IsCompressed(compressedData)
-	
+
 	// If the data appears to be compressed but we're using a none compressor,
 	// or if the detected type matches our compressor type, decompress it
 	if detectedType != compress.None {
 		return compress.DecompressWithType(compressedData, detectedType)
 	}
-	
+
 	// Otherwise, use our configured compressor to decompress
 	return fsys.compressor.Decompress(compressedData)
 }
@@ -199,13 +200,13 @@ func (fsys *FileSystem) ReadObjectFromDir(dirname, filename string) ([]byte, err
 
 	// Try to detect if the data is compressed
 	detectedType := compress.IsCompressed(compressedData)
-	
+
 	// If the data appears to be compressed but we're using a none compressor,
 	// or if the detected type matches our compressor type, decompress it
 	if detectedType != compress.None {
 		return compress.DecompressWithType(compressedData, detectedType)
 	}
-	
+
 	// Otherwise, use our configured compressor to decompress
 	return fsys.compressor.Decompress(compressedData)
 }
