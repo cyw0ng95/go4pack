@@ -69,14 +69,15 @@ func uploadHandler(c *gin.Context) {
 	md5sum := file.MD5Sum(data)
 	mimeType := file.DetectMIME(data, header.Filename)
 
-	if err := fsys.WriteObject(header.Filename, data); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "save file failed"})
+	// Content-addressed storage by MD5 (first 2 chars directory)
+	if err := fsys.WriteObjectHashed(md5sum, data); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "store file failed"})
 		return
 	}
 
-	compressedSize, err := fsys.GetObjectSize(header.Filename)
+	compressedSize, err := fsys.GetHashedObjectSize(md5sum)
 	if err != nil {
-		logger.GetLogger().Warn().Err(err).Str("filename", header.Filename).Msg("failed to get compressed size")
+		logger.GetLogger().Warn().Err(err).Str("hash", md5sum).Msg("failed to get compressed size")
 		compressedSize = originalSize
 	}
 	compressionType := fsys.GetCompressor().Type().String()
@@ -99,6 +100,7 @@ func uploadHandler(c *gin.Context) {
 
 	logger.GetLogger().Info().
 		Str("filename", header.Filename).
+		Str("hash", md5sum).
 		Int64("original_size", originalSize).
 		Int64("compressed_size", compressedSize).
 		Str("compression", compressionType).
@@ -126,37 +128,31 @@ func downloadHandler(c *gin.Context) {
 		return
 	}
 
-	// Check if file exists
-	exists, err := fsys.ObjectExists(filename)
+	// Lookup metadata to find MD5
+	db, err := ensureDB()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "filesystem error"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "database init failed"})
 		return
 	}
-	if !exists {
+	var rec FileRecord
+	if err := db.Where("filename = ?", filename).First(&rec).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "file not found"})
 		return
 	}
 
-	// Read the object (this will automatically decompress it)
-	data, err := fsys.ReadObject(filename)
+	data, err := fsys.ReadObjectHashed(rec.MD5)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "file not found"})
+		c.JSON(http.StatusNotFound, gin.H{"error": "file content not found"})
 		return
 	}
 
-	// Get original size for the response header
 	originalSize := int64(len(data))
-
 	c.Header("Content-Disposition", "attachment; filename="+filename)
 	c.Header("Content-Length", strconv.FormatInt(originalSize, 10))
-	c.Header("Content-Type", "application/octet-stream")
+	c.Header("Content-Type", rec.MIME)
+	c.Data(http.StatusOK, rec.MIME, data)
 
-	c.Data(http.StatusOK, "application/octet-stream", data)
-
-	logger.GetLogger().Info().
-		Str("filename", filename).
-		Int64("size", originalSize).
-		Msg("file downloaded")
+	logger.GetLogger().Info().Str("filename", filename).Str("hash", rec.MD5).Int64("size", originalSize).Msg("file downloaded")
 }
 
 func listHandler(c *gin.Context) {

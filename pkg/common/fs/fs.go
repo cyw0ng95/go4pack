@@ -245,3 +245,54 @@ func (fsys *FileSystem) GetOriginalObjectSize(filename string) (int64, error) {
 	}
 	return int64(len(data)), nil
 }
+
+// hashedPath returns the storage path for a given hex hash (expects length >=2)
+func (fsys *FileSystem) hashedPath(hash string) string {
+	if len(hash) < 2 {
+		return filepath.Join(fsys.objectsPath, hash) // fallback
+	}
+	return filepath.Join(fsys.objectsPath, hash[:2], hash)
+}
+
+// WriteObjectHashed stores data under a path derived from its hash (first 2 chars create a subdirectory).
+// If the file already exists, it is left untouched.
+func (fsys *FileSystem) WriteObjectHashed(hash string, data []byte) error {
+	p := fsys.hashedPath(hash)
+	dir := filepath.Dir(p)
+	if err := fsys.fs.MkdirAll(dir, 0755); err != nil {
+		return fmt.Errorf("failed to create hash directory: %w", err)
+	}
+	// If exists, skip re-writing (deduplicate)
+	if exists, _ := afero.Exists(fsys.fs, p); exists {
+		return nil
+	}
+	compressedData, err := fsys.compressor.Compress(data)
+	if err != nil {
+		return fmt.Errorf("failed to compress data: %w", err)
+	}
+	return afero.WriteFile(fsys.fs, p, compressedData, 0644)
+}
+
+// ReadObjectHashed reads a hashed (content-addressed) object.
+func (fsys *FileSystem) ReadObjectHashed(hash string) ([]byte, error) {
+	p := fsys.hashedPath(hash)
+	compressedData, err := afero.ReadFile(fsys.fs, p)
+	if err != nil {
+		return nil, err
+	}
+	detectedType := compress.IsCompressed(compressedData)
+	if detectedType != compress.None {
+		return compress.DecompressWithType(compressedData, detectedType)
+	}
+	return fsys.compressor.Decompress(compressedData)
+}
+
+// GetHashedObjectSize returns compressed size of hashed object.
+func (fsys *FileSystem) GetHashedObjectSize(hash string) (int64, error) {
+	p := fsys.hashedPath(hash)
+	info, err := fsys.fs.Stat(p)
+	if err != nil {
+		return 0, err
+	}
+	return info.Size(), nil
+}
