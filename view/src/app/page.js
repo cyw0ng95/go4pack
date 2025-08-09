@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from 'react'
 import {
   AppBar, Toolbar, Typography, Container, Grid, Card, CardContent, Box, Button,
   CircularProgress, Table, TableHead, TableRow, TableCell, TableBody, Paper,
-  Chip, Stack, Divider, IconButton, Snackbar, Alert
+  Chip, Stack, Divider, IconButton, Snackbar, Alert, LinearProgress
 } from '@mui/material'
 import CloudUploadIcon from '@mui/icons-material/CloudUpload'
 import RefreshIcon from '@mui/icons-material/Refresh'
@@ -19,6 +19,8 @@ export default function Home() {
   const [statsLoading, setStatsLoading] = useState(false)
   const [error, setError] = useState(null)
   const [showError, setShowError] = useState(false)
+  const [uploadQueue, setUploadQueue] = useState([]) // filenames queued
+  const [uploadProgress, setUploadProgress] = useState({ done: 0, total: 0 })
 
   const API_BASE = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:8080/api/fileio'
 
@@ -51,19 +53,36 @@ export default function Home() {
     } catch (e) { handleErr(e) } finally { setStatsLoading(false) }
   }, [API_BASE])
 
-  const uploadFile = async (file) => {
-    if (!file) return
-    setUploading(true)
-    try {
-      const fd = new FormData(); fd.append('file', file)
-      const r = await fetch(`${API_BASE}/upload`, { method:'POST', body: fd })
-      if (!r.ok) { let msg='upload failed'; try { const e=await r.json(); msg=e.error||msg } catch(_){} throw new Error(msg) }
-      await r.json(); await Promise.all([fetchFiles(), fetchStats()])
-    } catch (e) { handleErr(e) } finally { setUploading(false) }
+  const uploadSingle = async (file) => {
+    const fd = new FormData(); fd.append('file', file)
+    const r = await fetch(`${API_BASE}/upload`, { method:'POST', body: fd })
+    if (!r.ok) { let msg='upload failed'; try { const e=await r.json(); msg=e.error||msg } catch(_){} throw new Error(msg) }
+    await r.json()
   }
 
-  const handleFileChange = (e) => uploadFile(e.target.files?.[0])
-  const handleDrop = (e) => { e.preventDefault(); setDragOver(false); uploadFile(e.dataTransfer.files?.[0]) }
+  const uploadFiles = async (fileList) => {
+    if (!fileList || fileList.length === 0) return
+    const filesArr = Array.from(fileList)
+    setUploadQueue(filesArr.map(f=>f.name))
+    setUploadProgress({ done:0, total: filesArr.length })
+    setUploading(true)
+    try {
+      for (const f of filesArr) {
+        try { await uploadSingle(f) } catch (e) { handleErr(e) }
+        setUploadProgress(p=>({ ...p, done: p.done + 1 }))
+      }
+      await Promise.all([fetchFiles(), fetchStats()])
+    } finally {
+      setUploading(false)
+      // allow brief display then clear
+      setTimeout(()=>{ setUploadQueue([]); setUploadProgress({done:0,total:0}) }, 800)
+    }
+  }
+
+  const uploadFile = (file) => uploadFiles([file])
+
+  const handleFileChange = (e) => uploadFiles(e.target.files)
+  const handleDrop = (e) => { e.preventDefault(); setDragOver(false); uploadFiles(e.dataTransfer.files) }
   const handleDrag = (e, over) => { e.preventDefault(); setDragOver(over) }
 
   useEffect(()=>{ fetchFiles(); fetchStats() }, [fetchFiles, fetchStats])
@@ -77,12 +96,20 @@ export default function Home() {
           <Typography variant='h6' sx={{ flexGrow:1 }}>Go4Pack File Manager</Typography>
           <Button color='inherit' onClick={refreshAll} startIcon={<RefreshIcon />} disabled={loading||statsLoading}>Refresh</Button>
           <Button component='label' color='inherit' variant='outlined' startIcon={<CloudUploadIcon/>} disabled={uploading} sx={{ ml:2 }}>
-            Upload
-            <input hidden type='file' onChange={handleFileChange} />
+            {uploading ? 'Uploading' : 'Upload'}
+            <input hidden type='file' multiple onChange={handleFileChange} />
           </Button>
         </Toolbar>
       </AppBar>
       <Container maxWidth='xl' sx={{ py:4 }}>
+        {uploading && (
+          <Box sx={{ mb:3 }}>
+            <LinearProgress variant={uploadProgress.total? 'determinate':'indeterminate'} value={uploadProgress.total? (uploadProgress.done / uploadProgress.total)*100 : undefined} />
+            <Typography variant='caption' sx={{ display:'block', mt:0.5 }}>
+              Uploading {uploadProgress.done}/{uploadProgress.total} {uploadQueue[uploadProgress.done-1] ? `- ${uploadQueue[uploadProgress.done-1]}`:''}
+            </Typography>
+          </Box>
+        )}
         <Grid container spacing={3}>
           <Grid item xs={12} md={3}>
             <Card><CardContent>
