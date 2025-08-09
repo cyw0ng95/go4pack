@@ -7,6 +7,8 @@ export default function Home() {
   const [uploading, setUploading] = useState(false);
   const [loading, setLoading] = useState(false);
   const [dragOver, setDragOver] = useState(false);
+  const [stats, setStats] = useState(null);
+  const [statsLoading, setStatsLoading] = useState(false);
 
   const API_BASE = "http://localhost:8080/api/fileio";
 
@@ -25,6 +27,20 @@ export default function Home() {
     }
   };
 
+  // Fetch stats from the API
+  const fetchStats = async () => {
+    setStatsLoading(true);
+    try {
+      const response = await fetch(`${API_BASE}/stats`);
+      const data = await response.json();
+      setStats(data);
+    } catch (error) {
+      console.error("Failed to fetch stats:", error);
+    } finally {
+      setStatsLoading(false);
+    }
+  };
+
   // Upload file to the API
   const uploadFile = async (file) => {
     setUploading(true);
@@ -39,8 +55,9 @@ export default function Home() {
       
       if (response.ok) {
         const result = await response.json();
-        alert(`File "${result.filename}" uploaded successfully! Size: ${result.size} bytes`);
-        fetchFiles(); // Refresh the file list
+        alert(`File "${result.filename}" uploaded successfully! Size: ${result.size || result.original_size} bytes`);
+        fetchFiles();
+        fetchStats();
       } else {
         const error = await response.json();
         alert(`Upload failed: ${error.error}`);
@@ -96,21 +113,87 @@ export default function Home() {
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
   };
 
+  const formatPercentage = (value) => {
+    if (value === null || value === undefined || isNaN(value)) return '-';
+    return (value * 100).toFixed(2) + '%';
+  };
+
   // Format date
   const formatDate = (dateString) => {
     return new Date(dateString).toLocaleString();
   };
 
-  // Load files on component mount
+  // Load files and stats on component mount
   useEffect(() => {
     fetchFiles();
+    fetchStats();
   }, []);
 
   return (
     <div className="min-h-screen bg-gray-50 p-8">
-      <div className="max-w-6xl mx-auto">
+      <div className="max-w-7xl mx-auto">{/* widened */}
         <h1 className="text-3xl font-bold text-gray-900 mb-8">File Manager</h1>
-        
+
+        {/* Extended Stats Section */}
+        <div className="grid md:grid-cols-4 gap-6 mb-8">
+          {/* existing cards */}
+          <div className="bg-white rounded-lg shadow p-6">
+            <h3 className="text-sm font-medium text-gray-500">Files</h3>
+            <p className="mt-2 text-2xl font-semibold text-gray-900">{statsLoading ? '…' : (stats ? stats.file_count : 0)}</p>
+            <p className="mt-1 text-xs text-gray-500">Unique Hashes: {statsLoading || !stats ? '…' : stats.unique_hash_count}</p>
+          </div>
+          <div className="bg-white rounded-lg shadow p-6">
+            <h3 className="text-sm font-medium text-gray-500">Original vs Compressed</h3>
+            <p className="mt-2 text-sm text-gray-700">
+              {statsLoading || !stats ? '…' : `${formatFileSize(stats.total_original_size)} → ${formatFileSize(stats.total_compressed_size)}`}
+            </p>
+            <p className="mt-1 text-xs text-gray-500">Saved: {statsLoading || !stats ? '…' : formatFileSize(stats.space_saved)}</p>
+          </div>
+          <div className="bg-white rounded-lg shadow p-6">
+            <h3 className="text-sm font-medium text-gray-500">Physical Usage</h3>
+            <p className="mt-2 text-sm text-gray-700">{statsLoading || !stats ? '…' : formatFileSize(stats.physical_objects_size || 0)}</p>
+            <p className="mt-1 text-xs text-gray-500">Blobs: {statsLoading || !stats ? '…' : stats.physical_objects_count}</p>
+          </div>
+          <div className="bg-white rounded-lg shadow p-6">
+            <h3 className="text-sm font-medium text-gray-500">Compression Ratio</h3>
+            <p className="mt-2 text-2xl font-semibold text-gray-900">{statsLoading || !stats ? '…' : (stats.compression_ratio ? (stats.compression_ratio).toFixed(2) : '1.00')}</p>
+            <p className="mt-1 text-xs text-gray-500">Space Saved %: {statsLoading || !stats ? '…' : (stats.space_saved_percentage ? stats.space_saved_percentage.toFixed(2) + '%' : '0%')}</p>
+          </div>
+        </div>
+
+        {stats && (
+          <div className="grid md:grid-cols-2 gap-6 mb-8">
+            <div className="bg-white rounded-lg shadow p-6">
+              <h3 className="text-sm font-medium text-gray-500 mb-4">Dedup Savings</h3>
+              <ul className="space-y-2 text-sm text-gray-700">
+                <li>Logical Compressed: {formatFileSize(stats.total_compressed_size || 0)}</li>
+                <li>Physical Compressed: {formatFileSize(stats.physical_objects_size || 0)}</li>
+                <li>Dedup Saved (Compressed): {formatFileSize(stats.dedup_saved_compressed || 0)} ({stats.dedup_saved_compr_pct ? stats.dedup_saved_compr_pct.toFixed(2) + '%' : '0%'})</li>
+                <li>Dedup Saved (Original Basis): {formatFileSize(stats.dedup_saved_original || 0)} ({stats.dedup_saved_original_pct ? stats.dedup_saved_original_pct.toFixed(2) + '%' : '0%'})</li>
+              </ul>
+            </div>
+            <div className="bg-white rounded-lg shadow p-6">
+              <h3 className="text-sm font-medium text-gray-500 mb-4">Compression & MIME Types</h3>
+              <div className="mb-3">
+                <p className="text-xs font-semibold text-gray-600 mb-1">Compression</p>
+                <div className="flex flex-wrap gap-2">
+                  {stats.compression_types && Object.entries(stats.compression_types).map(([k,v]) => (
+                    <span key={k} className="px-2 py-1 bg-blue-50 text-blue-700 rounded text-xs">{k || 'unknown'}: {v}</span>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <p className="text-xs font-semibold text-gray-600 mb-1">MIME</p>
+                <div className="flex flex-wrap gap-2">
+                  {stats.mime_types && Object.entries(stats.mime_types).map(([k,v]) => (
+                    <span key={k} className="px-2 py-1 bg-purple-50 text-purple-700 rounded text-xs">{k || 'unknown'}: {v}</span>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Upload Section */}
         <div className="bg-white rounded-lg shadow-md p-6 mb-8">
           <h2 className="text-xl font-semibold text-gray-800 mb-4">Upload Files</h2>
@@ -161,13 +244,15 @@ export default function Home() {
           <div className="p-6 border-b border-gray-200">
             <div className="flex justify-between items-center">
               <h2 className="text-xl font-semibold text-gray-800">Files</h2>
-              <button
-                onClick={fetchFiles}
-                disabled={loading}
-                className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 transition-colors disabled:opacity-50"
-              >
-                {loading ? "Refreshing..." : "Refresh"}
-              </button>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => { fetchFiles(); fetchStats(); }}
+                  disabled={loading || statsLoading}
+                  className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 transition-colors disabled:opacity-50"
+                >
+                  {(loading || statsLoading) ? "Refreshing..." : "Refresh"}
+                </button>
+              </div>
             </div>
           </div>
           

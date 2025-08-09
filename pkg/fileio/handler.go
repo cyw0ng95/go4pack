@@ -2,7 +2,9 @@ package fileio
 
 import (
 	"io"
+	iofs "io/fs"
 	"net/http"
+	"path/filepath"
 	"strconv"
 	"time"
 
@@ -10,9 +12,9 @@ import (
 	"gorm.io/gorm"
 
 	"go4pack/pkg/common/database"
+	"go4pack/pkg/common/file"
 	"go4pack/pkg/common/fs"
 	"go4pack/pkg/common/logger"
-	"go4pack/pkg/common/file"
 )
 
 // FileRecord represents a stored file metadata entry
@@ -185,37 +187,101 @@ func statsHandler(c *gin.Context) {
 		return
 	}
 
-	// Calculate statistics
+	// Calculate logical statistics (based on metadata)
 	var totalOriginalSize, totalCompressedSize int64
-	var compressionStats = make(map[string]int)
+	compressionStats := make(map[string]int)
+	mimeStats := make(map[string]int)
+	uniqueHashSeen := make(map[string]struct{})
+	var uniqueCompressedSize int64
 
 	for _, file := range files {
 		totalOriginalSize += file.Size
 		totalCompressedSize += file.CompressedSize
 		compressionStats[file.CompressionType]++
+		mimeStats[file.MIME]++
+		if _, ok := uniqueHashSeen[file.MD5]; !ok {
+			uniqueHashSeen[file.MD5] = struct{}{}
+			uniqueCompressedSize += file.CompressedSize // first occurrence approximates physical (will align with on-disk hashed size)
+		}
 	}
 
 	var compressionRatio float64
 	if totalOriginalSize > 0 {
 		compressionRatio = float64(totalCompressedSize) / float64(totalOriginalSize)
 	}
-
 	spaceSaved := totalOriginalSize - totalCompressedSize
+	var spaceSavedPct float64
+	if totalOriginalSize > 0 {
+		spaceSavedPct = (float64(spaceSaved) / float64(totalOriginalSize)) * 100
+	}
+
+	// Physical storage scan (actual blobs on disk) to validate dedup numbers
+	physicalObjectsCount := 0
+	var physicalObjectsSize int64
+	if fsys, err := fs.New(); err == nil {
+		root := fsys.GetObjectsPath()
+		_ = filepath.WalkDir(root, func(path string, d iofs.DirEntry, err error) error {
+			if err != nil {
+				return nil
+			}
+			if d.IsDir() {
+				return nil
+			}
+			info, e := d.Info()
+			if e != nil {
+				return nil
+			}
+			physicalObjectsCount++
+			physicalObjectsSize += info.Size()
+			return nil
+		})
+	} // else ignore filesystem error; retain zero values
+
+	// Dedup savings relative to logical compressed accumulation
+	// logical compressed double-counts shared blobs, physicalObjectsSize is real disk usage
+	var dedupSavedCompressed int64 = totalCompressedSize - physicalObjectsSize
+	if dedupSavedCompressed < 0 {
+		dedupSavedCompressed = 0
+	}
+	var dedupSavedCompressedPct float64
+	if totalCompressedSize > 0 {
+		dedupSavedCompressedPct = float64(dedupSavedCompressed) / float64(totalCompressedSize) * 100
+	}
+	// Savings versus original logical size
+	var dedupSavedOriginal int64 = totalOriginalSize - physicalObjectsSize
+	if dedupSavedOriginal < 0 {
+		dedupSavedOriginal = 0
+	}
+	var dedupSavedOriginalPct float64
+	if totalOriginalSize > 0 {
+		dedupSavedOriginalPct = float64(dedupSavedOriginal) / float64(totalOriginalSize) * 100
+	}
 
 	logger.GetLogger().Info().
 		Int("file_count", len(files)).
-		Int64("total_original_size", totalOriginalSize).
-		Int64("total_compressed_size", totalCompressedSize).
+		Int("unique_hash_count", len(uniqueHashSeen)).
+		Int64("logical_original", totalOriginalSize).
+		Int64("logical_compressed", totalCompressedSize).
+		Int64("physical_compressed", physicalObjectsSize).
 		Float64("compression_ratio", compressionRatio).
-		Msg("compression stats requested")
+		Msg("compression & dedup stats requested")
 
 	c.JSON(http.StatusOK, gin.H{
-		"file_count":             len(files),
-		"total_original_size":    totalOriginalSize,
-		"total_compressed_size":  totalCompressedSize,
-		"compression_ratio":      compressionRatio,
-		"space_saved":            spaceSaved,
-		"space_saved_percentage": (float64(spaceSaved) / float64(totalOriginalSize)) * 100,
-		"compression_types":      compressionStats,
+		"file_count":               len(files),
+		"unique_hash_count":        len(uniqueHashSeen),
+		"total_original_size":      totalOriginalSize,
+		"total_compressed_size":    totalCompressedSize,
+		"compression_ratio":        compressionRatio,
+		"space_saved":              spaceSaved,
+		"space_saved_percentage":   spaceSavedPct,
+		"compression_types":        compressionStats,
+		"mime_types":               mimeStats,
+		"unique_compressed_size":   uniqueCompressedSize,
+		"physical_objects_count":   physicalObjectsCount,
+		"physical_objects_size":    physicalObjectsSize,
+		"dedup_saved_compressed":   dedupSavedCompressed,
+		"dedup_saved_compr_pct":    dedupSavedCompressedPct,
+		"dedup_saved_original":     dedupSavedOriginal,
+		"dedup_saved_original_pct": dedupSavedOriginalPct,
 	})
 }

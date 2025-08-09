@@ -15,8 +15,8 @@ func TestMD5Sum(t *testing.T) {
 
 func TestDetectMIME(t *testing.T) {
 	cases := []struct {
-		name string
-		data []byte
+		name   string
+		data   []byte
 		expect string
 	}{
 		{"plain", []byte("simple text content"), "text/plain; charset=utf-8"},
