@@ -6,12 +6,33 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"time"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 
+	"go4pack/pkg/common/database"
 	"go4pack/pkg/common/fs"
 	"go4pack/pkg/common/logger"
 )
+
+// FileRecord represents a stored file metadata entry
+type FileRecord struct {
+	ID        uint           `gorm:"primaryKey" json:"id"`
+	Filename  string         `gorm:"uniqueIndex;size:255" json:"filename"`
+	Size      int64          `json:"size"`
+	CreatedAt time.Time      `json:"created_at"`
+	UpdatedAt time.Time      `json:"updated_at"`
+	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`
+}
+
+// ensureDB migrates and returns db
+func ensureDB() (*gorm.DB, error) {
+	if db := database.Get(); db != nil {
+		return db, nil
+	}
+	return database.Init("filemeta.db", &FileRecord{})
+}
 
 // RegisterRoutes registers file upload/download routes under given router group
 func RegisterRoutes(rg *gin.RouterGroup) {
@@ -42,6 +63,16 @@ func uploadHandler(c *gin.Context) {
 	if err := fsys.WriteObject(header.Filename, data); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "save file failed"})
 		return
+	}
+
+	// Record metadata in database
+	if db, err := ensureDB(); err == nil {
+		rec := &FileRecord{Filename: header.Filename, Size: int64(len(data))}
+		if err := db.Create(rec).Error; err != nil {
+			logger.GetLogger().Error().Err(err).Str("filename", header.Filename).Msg("db create file record failed")
+		}
+	} else {
+		logger.GetLogger().Error().Err(err).Msg("db init failed")
 	}
 
 	logger.GetLogger().Info().Str("filename", header.Filename).Int("size", len(data)).Msg("file uploaded")
