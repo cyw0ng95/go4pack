@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Run environment script: starts Next.js dev server (if present) then builds & runs Go service.
-# Usage: bash runenv.sh
+# Usage: bash runenv.sh [-c]
+#   -c   Clear the .runtime directory before starting
 
 set -Eeuo pipefail
 
@@ -8,6 +9,22 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RUNTIME_DIR="$ROOT_DIR/.runtime"
 VIEW_DIR="$ROOT_DIR/view"
 NEXT_PID_FILE="$RUNTIME_DIR/nextjs.pid"
+CLEAR_RUNTIME=0
+
+# Parse flags
+while getopts ":c" opt; do
+  case "$opt" in
+    c) CLEAR_RUNTIME=1 ;;
+    *) ;;
+  esac
+done
+shift $((OPTIND-1))
+
+# Clear runtime if requested
+if [[ $CLEAR_RUNTIME -eq 1 ]]; then
+  echo "[INFO] Clearing $RUNTIME_DIR" >&2
+  rm -rf "$RUNTIME_DIR" || true
+fi
 
 mkdir -p "$RUNTIME_DIR"
 
