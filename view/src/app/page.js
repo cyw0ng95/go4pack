@@ -60,21 +60,37 @@ export default function Home() {
     await r.json()
   }
 
+  // Parallel upload with dynamic concurrency
   const uploadFiles = async (fileList) => {
     if (!fileList || fileList.length === 0) return
     const filesArr = Array.from(fileList)
     setUploadQueue(filesArr.map(f=>f.name))
     setUploadProgress({ done:0, total: filesArr.length })
     setUploading(true)
-    try {
-      for (const f of filesArr) {
-        try { await uploadSingle(f) } catch (e) { handleErr(e) }
-        setUploadProgress(p=>({ ...p, done: p.done + 1 }))
+    const concurrency = Math.min(filesArr.length, Math.max(2, (typeof navigator !== 'undefined' && navigator.hardwareConcurrency) ? Math.ceil(navigator.hardwareConcurrency / 2) : 4))
+    let index = 0
+    let done = 0
+
+    const worker = async () => {
+      while (true) {
+        let file
+        // fetch next file atomically
+        if (index < filesArr.length) {
+          file = filesArr[index++]
+        } else {
+          return
+        }
+        try { await uploadSingle(file) } catch (e) { handleErr(e) }
+        done += 1
+        setUploadProgress(p => ({ ...p, done }))
       }
+    }
+
+    try {
+      await Promise.all([...Array(concurrency)].map(()=>worker()))
       await Promise.all([fetchFiles(), fetchStats()])
     } finally {
       setUploading(false)
-      // allow brief display then clear
       setTimeout(()=>{ setUploadQueue([]); setUploadProgress({done:0,total:0}) }, 800)
     }
   }

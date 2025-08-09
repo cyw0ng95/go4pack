@@ -6,11 +6,13 @@ import (
 	"net/http"
 	"path/filepath"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 
+	"go4pack/pkg/common/compress"
 	"go4pack/pkg/common/database"
 	"go4pack/pkg/common/file"
 	"go4pack/pkg/common/fs"
@@ -45,6 +47,7 @@ func RegisterRoutes(rg *gin.RouterGroup) {
 	rg.GET("/download/:filename", downloadHandler)
 	rg.GET("/list", listHandler)
 	rg.GET("/stats", statsHandler)
+	rg.POST("/upload/multi", uploadMultiHandler)
 }
 
 func uploadHandler(c *gin.Context) {
@@ -70,6 +73,7 @@ func uploadHandler(c *gin.Context) {
 	originalSize := int64(len(data))
 	md5sum := file.MD5Sum(data)
 	mimeType := file.DetectMIME(data, header.Filename)
+	preCT := compress.IsCompressedOrMIME(data, mimeType)
 
 	// Content-addressed storage by MD5 (first 2 chars directory) with MIME-based compression avoidance
 	if err := fsys.WriteObjectHashedWithMIME(md5sum, data, mimeType); err != nil {
@@ -83,6 +87,9 @@ func uploadHandler(c *gin.Context) {
 		compressedSize = originalSize
 	}
 	compressionType := fsys.GetCompressor().Type().String()
+	if preCT != compress.None { // override if already compressed before storing
+		compressionType = preCT.String()
+	}
 
 	if db, err := ensureDB(); err == nil {
 		rec := &FileRecord{
@@ -284,4 +291,111 @@ func statsHandler(c *gin.Context) {
 		"dedup_saved_original":     dedupSavedOriginal,
 		"dedup_saved_original_pct": dedupSavedOriginalPct,
 	})
+}
+
+// uploadMultiHandler handles parallel multi-file uploads.
+func uploadMultiHandler(c *gin.Context) {
+	// Parse multipart form (use a large but bounded memory; rest to temp files)
+	if err := c.Request.ParseMultipartForm(32 << 20); err != nil { // 32MB memory
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid multipart form"})
+		return
+	}
+	form := c.Request.MultipartForm
+	files := form.File["files"]
+	if len(files) == 0 { // allow also field name "file" repeated
+		files = form.File["file"]
+	}
+	if len(files) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "no files provided"})
+		return
+	}
+
+	fsys, err := fs.New()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "filesystem init failed"})
+		return
+	}
+	db, dbErr := ensureDB() // optional, continue without DB if fails
+
+	type result struct {
+		Filename        string  `json:"filename"`
+		OriginalSize    int64   `json:"original_size"`
+		CompressedSize  int64   `json:"compressed_size"`
+		CompressionType string  `json:"compression_type"`
+		CompressionRatio float64 `json:"compression_ratio"`
+		MD5             string  `json:"md5"`
+		MIME            string  `json:"mime"`
+		Error           string  `json:"error,omitempty"`
+	}
+
+	results := make([]result, len(files))
+	var wg sync.WaitGroup
+	concurrency := 4
+	sem := make(chan struct{}, concurrency)
+
+	for i, fh := range files {
+		wg.Add(1)
+		index := i
+		fileHeader := fh
+		go func() {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			res := &results[index]
+			res.Filename = fileHeader.Filename
+
+			f, err := fileHeader.Open()
+			if err != nil {
+				res.Error = "open failed"
+				return
+			}
+			data, err := io.ReadAll(f)
+			f.Close()
+			if err != nil {
+				res.Error = "read failed"
+				return
+			}
+			res.OriginalSize = int64(len(data))
+			res.MD5 = file.MD5Sum(data)
+			res.MIME = file.DetectMIME(data, fileHeader.Filename)
+			preCT := compress.IsCompressedOrMIME(data, res.MIME)
+
+			if err := fsys.WriteObjectHashedWithMIME(res.MD5, data, res.MIME); err != nil {
+				res.Error = "store failed"
+				return
+			}
+			cs, err := fsys.GetHashedObjectSize(res.MD5)
+			if err != nil {
+				cs = res.OriginalSize
+			}
+			res.CompressedSize = cs
+			if preCT != compress.None {
+				res.CompressionType = preCT.String()
+			} else {
+				res.CompressionType = fsys.GetCompressor().Type().String()
+			}
+			if res.OriginalSize > 0 {
+				res.CompressionRatio = float64(res.CompressedSize) / float64(res.OriginalSize)
+			}
+
+			if dbErr == nil && db != nil {
+				rec := &FileRecord{
+					Filename:        res.Filename,
+					Size:            res.OriginalSize,
+					CompressedSize:  res.CompressedSize,
+					CompressionType: res.CompressionType,
+					MD5:             res.MD5,
+					MIME:            res.MIME,
+				}
+				_ = db.Create(rec).Error // ignore individual errors here
+			}
+
+			logger.GetLogger().Info().Str("filename", res.Filename).Str("hash", res.MD5).Int64("original_size", res.OriginalSize).Int64("compressed_size", res.CompressedSize).Str("compression", res.CompressionType).Str("mime", res.MIME).Msg("file uploaded (multi)")
+		}()
+	}
+
+	wg.Wait()
+
+	c.JSON(http.StatusOK, gin.H{"results": results, "count": len(results)})
 }
