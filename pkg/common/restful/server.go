@@ -28,6 +28,7 @@ func WithShutdownTimeout(d time.Duration) Option { return func(s *Server) { s.sh
 func NewServer(opts ...Option) *Server {
 	g := gin.New()
 	g.Use(gin.Recovery())
+	g.Use(CORSMiddleware())
 	g.Use(RequestLogger())
 	g.Use(gin.Logger())
 
@@ -70,5 +71,22 @@ func RequestLogger() gin.HandlerFunc {
 		latency := time.Since(start)
 		status := c.Writer.Status()
 		logger.GetLogger().Info().Int("status", status).Str("method", c.Request.Method).Str("path", c.Request.URL.Path).Dur("latency", latency).Msg("request")
+	}
+}
+
+// CORSMiddleware handles Cross-Origin Resource Sharing
+func CORSMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
+		c.Writer.Header().Set("Access-Control-Allow-Credentials", "true")
+		c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, accept, origin, Cache-Control, X-Requested-With")
+		c.Writer.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS, GET, PUT, DELETE")
+
+		if c.Request.Method == "OPTIONS" {
+			c.AbortWithStatus(204)
+			return
+		}
+
+		c.Next()
 	}
 }

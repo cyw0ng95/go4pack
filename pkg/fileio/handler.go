@@ -38,6 +38,7 @@ func ensureDB() (*gorm.DB, error) {
 func RegisterRoutes(rg *gin.RouterGroup) {
 	rg.POST("/upload", uploadHandler)
 	rg.GET("/download/:filename", downloadHandler)
+	rg.GET("/list", listHandler)
 }
 
 func uploadHandler(c *gin.Context) {
@@ -101,4 +102,21 @@ func downloadHandler(c *gin.Context) {
 	c.File(objectPath)
 
 	logger.GetLogger().Info().Str("filename", filename).Int64("size", stat.Size()).Msg("file downloaded")
+}
+
+func listHandler(c *gin.Context) {
+	db, err := ensureDB()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "database init failed"})
+		return
+	}
+
+	var files []FileRecord
+	if err := db.Find(&files).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "query files failed"})
+		return
+	}
+
+	logger.GetLogger().Info().Int("count", len(files)).Msg("files listed")
+	c.JSON(http.StatusOK, gin.H{"files": files, "count": len(files)})
 }

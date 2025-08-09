@@ -7,11 +7,9 @@ set -Eeuo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RUNTIME_DIR="$ROOT_DIR/.runtime"
 VIEW_DIR="$ROOT_DIR/view"
-BIN_DIR="$ROOT_DIR/bin"
-GO_BINARY="$BIN_DIR/go4pack"
 NEXT_PID_FILE="$RUNTIME_DIR/nextjs.pid"
 
-mkdir -p "$RUNTIME_DIR" "$BIN_DIR"
+mkdir -p "$RUNTIME_DIR"
 
 cleanup() {
   echo "[INFO] Caught exit signal. Cleaning up..." >&2
@@ -55,17 +53,10 @@ start_next() {
   fi
 }
 
-build_go() {
-  echo "[INFO] Building Go module..." >&2
-  go build -o "$GO_BINARY" .
-  echo "[INFO] Go binary at $GO_BINARY" >&2
-}
-
 run_go() {
-  echo "[INFO] Running Go service... (Ctrl+C to stop)" >&2
-  "$GO_BINARY"
+  echo "[INFO] Running Go service with 'go run .' (Ctrl+C to stop)" >&2
+  (cd "$ROOT_DIR" && go run .)
 }
 
 start_next
-build_go
 run_go
