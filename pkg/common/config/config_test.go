@@ -81,7 +81,7 @@ func TestLoad(t *testing.T) {
 
 		oldWd, _ := os.Getwd()
 		defer os.Chdir(oldWd)
-		
+
 		// Try to create config in directory without write permission
 		if err := os.Chdir(permDir); err != nil {
 			t.Skipf("Could not change to restricted directory: %v", err)
