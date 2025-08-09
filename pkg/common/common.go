@@ -1,6 +1,7 @@
 package common
 
 import (
+	"go4pack/pkg/common/config"
 	"go4pack/pkg/common/logger"
 
 	"github.com/rs/zerolog"
@@ -17,7 +18,39 @@ func InitLoggerWithConfig(config *logger.Config) error {
 	return logger.Init(config)
 }
 
+// InitWithConfig initializes both config and logger
+func InitWithConfig(configPath string) error {
+	// Load configuration
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		return err
+	}
+
+	// Initialize logger with debug level if debug is enabled
+	loggerConfig := logger.DefaultConfig()
+	if cfg.Debug {
+		loggerConfig.Level = "debug"
+	}
+
+	return logger.Init(loggerConfig)
+}
+
+// Init initializes the application with default settings
+func Init() error {
+	return InitWithConfig("")
+}
+
 // GetLogger returns the global logger instance
 func GetLogger() *zerolog.Logger {
 	return logger.GetLogger()
+}
+
+// GetConfig returns the current configuration
+func GetConfig() *config.Config {
+	return config.Get()
+}
+
+// IsDebug returns whether debug mode is enabled
+func IsDebug() bool {
+	return config.IsDebug()
 }
