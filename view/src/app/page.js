@@ -21,6 +21,7 @@ export default function Home() {
   const [showError, setShowError] = useState(false)
   const [uploadQueue, setUploadQueue] = useState([]) // filenames queued
   const [uploadProgress, setUploadProgress] = useState({ done: 0, total: 0 })
+  const [uploadSession, setUploadSession] = useState(null) // {start, end, files:[{name,size,start,end,durationMs}]}
 
   const API_BASE = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:8080/api/fileio'
 
@@ -64,6 +65,8 @@ export default function Home() {
   const uploadFiles = async (fileList) => {
     if (!fileList || fileList.length === 0) return
     const filesArr = Array.from(fileList)
+    const sessionStart = Date.now()
+    setUploadSession({ start: sessionStart, end: null, files: [] })
     setUploadQueue(filesArr.map(f=>f.name))
     setUploadProgress({ done:0, total: filesArr.length })
     setUploading(true)
@@ -71,16 +74,23 @@ export default function Home() {
     let index = 0
     let done = 0
 
+    // thread-safe push (single-thread JS, but use functional update)
+    const recordFile = (entry) => {
+      setUploadSession(s => s ? { ...s, files: [...s.files, entry] } : s)
+    }
+
     const worker = async () => {
       while (true) {
         let file
-        // fetch next file atomically
         if (index < filesArr.length) {
           file = filesArr[index++]
         } else {
           return
         }
+        const start = Date.now()
         try { await uploadSingle(file) } catch (e) { handleErr(e) }
+        const end = Date.now()
+        recordFile({ name: file.name, size: file.size, start, end, durationMs: end - start })
         done += 1
         setUploadProgress(p => ({ ...p, done }))
       }
@@ -90,6 +100,8 @@ export default function Home() {
       await Promise.all([...Array(concurrency)].map(()=>worker()))
       await Promise.all([fetchFiles(), fetchStats()])
     } finally {
+      const end = Date.now()
+      setUploadSession(s => s ? { ...s, end } : s)
       setUploading(false)
       setTimeout(()=>{ setUploadQueue([]); setUploadProgress({done:0,total:0}) }, 800)
     }
@@ -105,6 +117,64 @@ export default function Home() {
 
   const refreshAll = () => { fetchFiles(); fetchStats() }
 
+  // Helper metrics for session
+  const renderUploadSession = () => {
+    if (!uploadSession) return null
+    const { start, end, files: uf } = uploadSession
+    const now = Date.now()
+    const effectiveEnd = end || now
+    const durationMs = effectiveEnd - start
+    const totalBytes = uf.reduce((a,b)=> a + (b.size||0), 0)
+    const avgPerFile = uf.length ? (durationMs / uf.length) : 0
+    const throughput = durationMs > 0 ? (totalBytes / (durationMs/1000)) : 0 // bytes/sec
+    const fmtDur = (ms) => {
+      if (ms < 1000) return ms + ' ms'
+      const s = ms/1000
+      if (s < 60) return s.toFixed(2) + ' s'
+      const m = Math.floor(s/60); const rem = s - m*60
+      return `${m}m ${rem.toFixed(1)}s`
+    }
+    const fmtBps = (bps) => {
+      if (bps <= 0) return '-'
+      const k = 1024
+      const units = ['B/s','KB/s','MB/s','GB/s']
+      let i=0; while (bps >= k && i < units.length-1){ bps/=k; i++ }
+      return bps.toFixed(2)+' '+units[i]
+    }
+    return (
+      <Card variant='outlined' sx={{ mb:3 }}>
+        <CardContent>
+          <Stack direction='row' justifyContent='space-between' alignItems='flex-start' spacing={2} flexWrap='wrap'>
+            <Box sx={{ minWidth: 180 }}>
+              <Typography variant='overline'>Upload Session</Typography>
+              <Typography variant='body2'>Start: {new Date(start).toLocaleTimeString()}</Typography>
+              <Typography variant='body2'>End: {end ? new Date(end).toLocaleTimeString() : '…'}</Typography>
+              <Typography variant='body2'>Duration: {fmtDur(durationMs)}</Typography>
+            </Box>
+            <Box sx={{ minWidth: 180 }}>
+              <Typography variant='overline'>Performance</Typography>
+              <Typography variant='body2'>Files: {uploadProgress.total}</Typography>
+              <Typography variant='body2'>Completed: {uf.length}</Typography>
+              <Typography variant='body2'>Avg/File: {fmtDur(avgPerFile)}</Typography>
+              <Typography variant='body2'>Throughput: {fmtBps(throughput)}</Typography>
+            </Box>
+            <Box sx={{ minWidth: 220, flexGrow:1 }}>
+              <Typography variant='overline'>Recent Files</Typography>
+              <Stack spacing={0.5} sx={{ maxHeight:120, overflow:'auto', mt:0.5 }}>
+                {uf.slice(-5).reverse().map(f=> (
+                  <Typography key={f.name+f.start} variant='caption' sx={{ display:'block' }}>
+                    {f.name} • {formatFileSize(f.size)} • {fmtDur(f.durationMs)}
+                  </Typography>
+                ))}
+                {uf.length === 0 && <Typography variant='caption' color='text.secondary'>Pending…</Typography>}
+              </Stack>
+            </Box>
+          </Stack>
+        </CardContent>
+      </Card>
+    )
+  }
+
   return (
     <Box sx={{ flexGrow:1, bgcolor:'background.default', minHeight:'100vh' }}>
       <AppBar position='static' color='primary' elevation={1}>
@@ -118,6 +188,7 @@ export default function Home() {
         </Toolbar>
       </AppBar>
       <Container maxWidth='xl' sx={{ py:4 }}>
+        {renderUploadSession()}
         {uploading && (
           <Box sx={{ mb:3 }}>
             <LinearProgress variant={uploadProgress.total? 'determinate':'indeterminate'} value={uploadProgress.total? (uploadProgress.done / uploadProgress.total)*100 : undefined} />
