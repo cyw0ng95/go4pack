@@ -12,6 +12,7 @@ import (
 	"go4pack/pkg/common/database"
 	"go4pack/pkg/common/fs"
 	"go4pack/pkg/common/logger"
+	"go4pack/pkg/common/file"
 )
 
 // FileRecord represents a stored file metadata entry
@@ -21,6 +22,8 @@ type FileRecord struct {
 	Size            int64          `json:"size"`             // Original uncompressed size
 	CompressedSize  int64          `json:"compressed_size"`  // Compressed size on disk
 	CompressionType string         `json:"compression_type"` // Type of compression used
+	MD5             string         `json:"md5"`
+	MIME            string         `json:"mime"`
 	CreatedAt       time.Time      `json:"created_at"`
 	UpdatedAt       time.Time      `json:"updated_at"`
 	DeletedAt       gorm.DeletedAt `gorm:"index" json:"-"`
@@ -43,12 +46,12 @@ func RegisterRoutes(rg *gin.RouterGroup) {
 }
 
 func uploadHandler(c *gin.Context) {
-	file, header, err := c.Request.FormFile("file")
+	fileHdr, header, err := c.Request.FormFile("file")
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "file is required"})
 		return
 	}
-	defer file.Close()
+	defer fileHdr.Close()
 
 	fsys, err := fs.New()
 	if err != nil {
@@ -56,36 +59,36 @@ func uploadHandler(c *gin.Context) {
 		return
 	}
 
-	data, err := io.ReadAll(file)
+	data, err := io.ReadAll(fileHdr)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "read file failed"})
 		return
 	}
 
 	originalSize := int64(len(data))
+	md5sum := file.MD5Sum(data)
+	mimeType := file.DetectMIME(data, header.Filename)
 
 	if err := fsys.WriteObject(header.Filename, data); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "save file failed"})
 		return
 	}
 
-	// Get compressed size from filesystem
 	compressedSize, err := fsys.GetObjectSize(header.Filename)
 	if err != nil {
 		logger.GetLogger().Warn().Err(err).Str("filename", header.Filename).Msg("failed to get compressed size")
-		compressedSize = originalSize // fallback to original size
+		compressedSize = originalSize
 	}
-
-	// Get compression type
 	compressionType := fsys.GetCompressor().Type().String()
 
-	// Record metadata in database
 	if db, err := ensureDB(); err == nil {
 		rec := &FileRecord{
 			Filename:        header.Filename,
 			Size:            originalSize,
 			CompressedSize:  compressedSize,
 			CompressionType: compressionType,
+			MD5:             md5sum,
+			MIME:            mimeType,
 		}
 		if err := db.Create(rec).Error; err != nil {
 			logger.GetLogger().Error().Err(err).Str("filename", header.Filename).Msg("db create file record failed")
@@ -99,15 +102,20 @@ func uploadHandler(c *gin.Context) {
 		Int64("original_size", originalSize).
 		Int64("compressed_size", compressedSize).
 		Str("compression", compressionType).
+		Str("md5", md5sum).
+		Str("mime", mimeType).
 		Msg("file uploaded")
 
-	c.JSON(http.StatusOK, gin.H{
+	resp := gin.H{
 		"filename":          header.Filename,
 		"original_size":     originalSize,
 		"compressed_size":   compressedSize,
 		"compression_type":  compressionType,
 		"compression_ratio": float64(compressedSize) / float64(originalSize),
-	})
+		"md5":               md5sum,
+		"mime":              mimeType,
+	}
+	c.JSON(http.StatusOK, resp)
 }
 
 func downloadHandler(c *gin.Context) {
