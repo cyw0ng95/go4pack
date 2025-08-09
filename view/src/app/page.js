@@ -54,6 +54,29 @@ export default function Home() {
     } catch (e) { handleErr(e) } finally { setStatsLoading(false) }
   }, [API_BASE])
 
+  // Helper: decide if batch multi-upload is beneficial
+  const shouldBatchMulti = (arr) => {
+    if (arr.length < 5) return false
+    const total = arr.reduce((a,b)=>a+b.size,0)
+    const avg = total / arr.length
+    // Batch if many small files (avg < 256KB) or total <= 32MB and count <= 200
+    return (avg < 256*1024 && arr.length >= 5) || (total <= 32*1024*1024 && arr.length <= 200)
+  }
+
+  const multiUploadRequest = async (arr) => {
+    const fd = new FormData()
+    arr.forEach(f=>fd.append('files', f))
+    const start = Date.now()
+    const r = await fetch(`${API_BASE}/upload/multi`, { method:'POST', body: fd })
+    if (!r.ok) { let msg='multi upload failed'; try { const e=await r.json(); msg=e.error||msg } catch(_){} throw new Error(msg) }
+    const end = Date.now()
+    const resp = await r.json()
+    // Update session entries
+    const perFileDuration = (end-start) / (arr.length || 1)
+    setUploadSession(s => s ? { ...s, files: [ ...s.files, ...(resp.results||[]).map(f=> ({ name: f.filename, size: f.original_size, start: start, end: end, durationMs: perFileDuration })) ] } : s)
+    return resp
+  }
+
   const uploadSingle = async (file) => {
     const fd = new FormData(); fd.append('file', file)
     const r = await fetch(`${API_BASE}/upload`, { method:'POST', body: fd })
@@ -61,25 +84,61 @@ export default function Home() {
     await r.json()
   }
 
-  // Parallel upload with dynamic concurrency
+  // Optimized parallel upload with adaptive concurrency & batching
   const uploadFiles = async (fileList) => {
     if (!fileList || fileList.length === 0) return
-    const filesArr = Array.from(fileList)
+    // Convert & sort (largest first improves bandwidth utilization when mixed sizes)
+    const filesArr = Array.from(fileList).sort((a,b)=> b.size - a.size)
     const sessionStart = Date.now()
     setUploadSession({ start: sessionStart, end: null, files: [] })
     setUploadQueue(filesArr.map(f=>f.name))
     setUploadProgress({ done:0, total: filesArr.length })
     setUploading(true)
-    const concurrency = Math.min(filesArr.length, Math.max(2, (typeof navigator !== 'undefined' && navigator.hardwareConcurrency) ? Math.ceil(navigator.hardwareConcurrency / 2) : 4))
+
+    // Batch path (many small files) to reduce HTTP overhead
+    if (shouldBatchMulti(filesArr)) {
+      try {
+        await multiUploadRequest(filesArr)
+        setUploadProgress({ done: filesArr.length, total: filesArr.length })
+        await Promise.all([fetchFiles(), fetchStats()])
+      } catch (e) { handleErr(e) }
+      finally {
+        const end = Date.now()
+        setUploadSession(s => s ? { ...s, end } : s)
+        setUploading(false)
+        setTimeout(()=>{ setUploadQueue([]); setUploadProgress({done:0,total:0}) }, 800)
+      }
+      return
+    }
+
+    // Parallel single-file path
+    // Adaptive concurrency: base on hardware concurrency & avg size
+    const totalBytes = filesArr.reduce((a,b)=>a+b.size,0)
+    const avgSize = totalBytes / filesArr.length
+    const cores = (typeof navigator !== 'undefined' && navigator.hardwareConcurrency) ? navigator.hardwareConcurrency : 4
+    let base = Math.min(16, Math.max(2, Math.ceil(cores * 0.75)))
+    if (avgSize < 512*1024) base = Math.min(32, base * 2) // more concurrency for tiny files
+    let concurrency = Math.min(base, filesArr.length)
+
     let index = 0
     let done = 0
 
-    // thread-safe push (single-thread JS, but use functional update)
     const recordFile = (entry) => {
       setUploadSession(s => s ? { ...s, files: [...s.files, entry] } : s)
     }
 
+    // Dynamic scaling: if queue remains large & workers finish quickly, spawn extra (up to cap)
+    const maybeScale = (startTime) => {
+      if (Date.now() - startTime < 300 && concurrency < Math.min(64, filesArr.length)) {
+        concurrency += 1
+        // Launch an extra worker
+        worker()
+      }
+    }
+
     const worker = async () => {
+      // capture worker start for scaling heuristic
+      const wStart = Date.now()
       while (true) {
         let file
         if (index < filesArr.length) {
@@ -93,6 +152,7 @@ export default function Home() {
         recordFile({ name: file.name, size: file.size, start, end, durationMs: end - start })
         done += 1
         setUploadProgress(p => ({ ...p, done }))
+        if (done === concurrency) { maybeScale(wStart) }
       }
     }
 

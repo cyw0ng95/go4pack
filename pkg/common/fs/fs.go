@@ -330,3 +330,38 @@ func (fsys *FileSystem) GetHashedObjectSize(hash string) (int64, error) {
 	}
 	return info.Size(), nil
 }
+
+// HashedObjectPath returns the filesystem path where a given hash would be stored.
+func (fsys *FileSystem) HashedObjectPath(hash string) string { return fsys.hashedPath(hash) }
+
+// CommitTempAsHashed moves a temp file into its hashed location unless an object already exists.
+// Returns final path and a boolean indicating whether new file was stored.
+func (fsys *FileSystem) CommitTempAsHashed(tempFilePath, hash string) (string, bool, error) {
+	p := fsys.hashedPath(hash)
+	dir := filepath.Dir(p)
+	if err := fsys.fs.MkdirAll(dir, 0755); err != nil {
+		return "", false, fmt.Errorf("create hash dir: %w", err)
+	}
+	if exists, _ := afero.Exists(fsys.fs, p); exists {
+		// discard temp (dedup)
+		_ = fsys.fs.Remove(tempFilePath)
+		return p, false, nil
+	}
+	// rename (must use os.Rename for real FS; afero OsFs implements)
+	if _, ok := fsys.fs.(*afero.OsFs); ok {
+		if err := os.Rename(tempFilePath, p); err != nil {
+			return "", false, fmt.Errorf("rename temp: %w", err)
+		}
+	} else {
+		// fallback: copy then remove
+		data, err := afero.ReadFile(fsys.fs, tempFilePath)
+		if err != nil {
+			return "", false, fmt.Errorf("read temp: %w", err)
+		}
+		if err := afero.WriteFile(fsys.fs, p, data, 0644); err != nil {
+			return "", false, fmt.Errorf("write hashed: %w", err)
+		}
+		_ = fsys.fs.Remove(tempFilePath)
+	}
+	return p, true, nil
+}

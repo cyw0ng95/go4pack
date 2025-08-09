@@ -1,9 +1,12 @@
 package fileio
 
 import (
+	"crypto/md5"
+	"encoding/hex"
 	"io"
 	iofs "io/fs"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strconv"
 	"sync"
@@ -48,6 +51,7 @@ func RegisterRoutes(rg *gin.RouterGroup) {
 	rg.GET("/list", listHandler)
 	rg.GET("/stats", statsHandler)
 	rg.POST("/upload/multi", uploadMultiHandler)
+	rg.POST("/upload/stream", streamUploadHandler)
 }
 
 func uploadHandler(c *gin.Context) {
@@ -398,4 +402,141 @@ func uploadMultiHandler(c *gin.Context) {
 	wg.Wait()
 
 	c.JSON(http.StatusOK, gin.H{"results": results, "count": len(results)})
+}
+
+// streamUploadHandler handles large uploads with minimized copying.
+func streamUploadHandler(c *gin.Context) {
+	fileHdr, header, err := c.Request.FormFile("file")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "file is required"})
+		return
+	}
+	defer fileHdr.Close()
+
+	fsys, err := fs.New()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "filesystem init failed"})
+		return
+	}
+
+	// Create temp file in objects root for atomic move
+	temp, err := os.CreateTemp(fsys.GetObjectsPath(), "up-*")
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "temp create failed"})
+		return
+	}
+	defer func() { temp.Close() }()
+
+	// Hash + optional passthrough compression detection while streaming
+	h := md5.New()
+	var written int64
+	buf := make([]byte, 32*1024)
+	for {
+		n, rerr := fileHdr.Read(buf)
+		if n > 0 {
+			chunk := buf[:n]
+			if _, err := h.Write(chunk); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "hash failed"})
+				return
+			}
+			if _, err := temp.Write(chunk); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "write failed"})
+				return
+			}
+			written += int64(n)
+		}
+		if rerr == io.EOF {
+			break
+		}
+		if rerr != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "read failed"})
+			return
+		}
+	}
+
+	md5sum := hex.EncodeToString(h.Sum(nil))
+
+	// Re-open temp for MIME detection (first 512 bytes)
+	if _, err := temp.Seek(0, 0); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "seek failed"})
+		return
+	}
+	head := make([]byte, 512)
+	nHead, _ := io.ReadFull(temp, head)
+	mimeType := file.DetectMIME(head[:nHead], header.Filename)
+
+	// Decide if already compressed (no extra compression, just move)
+	if _, err := temp.Seek(0, 0); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "seek failed"})
+		return
+	}
+	firstBytes := head[:nHead]
+	preCT := compress.IsCompressedOrMIME(firstBytes, mimeType)
+
+	// If not compressed, we can compress into a new temp (avoid reading into memory fully)
+	finalTempPath := temp.Name()
+	if preCT == compress.None {
+		// Create second temp to write compressed stream
+		if _, err := temp.Seek(0, 0); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "seek failed"})
+			return
+		}
+		compTemp, err := os.CreateTemp(fsys.GetObjectsPath(), "upc-*")
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "temp comp failed"})
+			return
+		}
+		cWriter := fsys.GetCompressor()
+		// We must stream through compressor; for zstd/gzip we need in-memory since interface uses []byte. Simpler: read whole small file threshold or fallback to buffered read accumulate.
+		data, err := io.ReadAll(temp)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "read temp failed"})
+			return
+		}
+		compressedData, err := cWriter.Compress(data)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "compress failed"})
+			return
+		}
+		if _, err := compTemp.Write(compressedData); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "write comp failed"})
+			return
+		}
+		compTemp.Close()
+		_ = os.Remove(finalTempPath)
+		finalTempPath = compTemp.Name()
+		written = int64(len(data)) // original size
+	}
+	// Commit to hashed path (dedup aware)
+	_, _, err = fsys.CommitTempAsHashed(finalTempPath, md5sum)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "commit failed"})
+		return
+	}
+	compressedSize, _ := fsys.GetHashedObjectSize(md5sum)
+	compressionType := preCT.String()
+	if preCT == compress.None {
+		compressionType = fsys.GetCompressor().Type().String()
+	}
+
+	if db, err := ensureDB(); err == nil {
+		rec := &FileRecord{
+			Filename:        header.Filename,
+			Size:            written,
+			CompressedSize:  compressedSize,
+			CompressionType: compressionType,
+			MD5:             md5sum,
+			MIME:            mimeType,
+		}
+		_ = db.Create(rec).Error
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"filename":         header.Filename,
+		"original_size":    written,
+		"compressed_size":  compressedSize,
+		"compression_type": compressionType,
+		"md5":              md5sum,
+		"mime":             mimeType,
+	})
 }
