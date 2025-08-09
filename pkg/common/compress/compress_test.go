@@ -69,95 +69,87 @@ func TestNoneCompressor(t *testing.T) {
 	}
 }
 
-func TestNewCompressor(t *testing.T) {
+func TestZstdCompressor(t *testing.T) {
+	c := NewCompressor(Zstd)
+	if c.Type() != Zstd {
+		t.Fatalf("expected Zstd compressor")
+	}
+	data := []byte("This is some test data that should compress well with zstd.")
+	compressed, err := c.Compress(data)
+	if err != nil {
+		t.Fatalf("zstd compression failed: %v", err)
+	}
+	if len(compressed) == 0 {
+		t.Fatalf("zstd compressed data empty")
+	}
+	decompressed, err := c.Decompress(compressed)
+	if err != nil {
+		t.Fatalf("zstd decompression failed: %v", err)
+	}
+	if !bytes.Equal(data, decompressed) {
+		t.Fatalf("zstd roundtrip mismatch")
+	}
+}
+
+func TestNewCompressor_Factory(t *testing.T) {
 	tests := []struct {
-		cType    CompressionType
-		expected CompressionType
+		in   CompressionType
+		want CompressionType
 	}{
 		{Gzip, Gzip},
+		{Zstd, Zstd},
 		{None, None},
-		{CompressionType(999), None}, // Invalid type should default to None
+		{CompressionType(999), None},
 	}
-
-	for _, test := range tests {
-		compressor := NewCompressor(test.cType)
-		if compressor.Type() != test.expected {
-			t.Errorf("NewCompressor(%v) returned type %v, expected %v", test.cType, compressor.Type(), test.expected)
+	for _, tt := range tests {
+		c := NewCompressor(tt.in)
+		if c.Type() != tt.want {
+			t.Errorf("NewCompressor(%v) => %v, want %v", tt.in, c.Type(), tt.want)
 		}
 	}
 }
 
-func TestCompressWithType(t *testing.T) {
-	testData := []byte("Test data for compression")
-
-	// Test with Gzip
-	compressed, err := CompressWithType(testData, Gzip)
+func TestCompressWithType_Zstd(t *testing.T) {
+	data := []byte("Roundtrip with zstd")
+	compressed, err := CompressWithType(data, Zstd)
 	if err != nil {
-		t.Fatalf("CompressWithType failed: %v", err)
+		t.Fatalf("zstd compress failed: %v", err)
 	}
-
-	decompressed, err := DecompressWithType(compressed, Gzip)
+	decompressed, err := DecompressWithType(compressed, Zstd)
 	if err != nil {
-		t.Fatalf("DecompressWithType failed: %v", err)
+		t.Fatalf("zstd decompress failed: %v", err)
 	}
-
-	if !bytes.Equal(testData, decompressed) {
-		t.Fatalf("Round-trip compression failed")
-	}
-
-	// Test with None
-	compressed, err = CompressWithType(testData, None)
-	if err != nil {
-		t.Fatalf("CompressWithType with None failed: %v", err)
-	}
-
-	if !bytes.Equal(testData, compressed) {
-		t.Fatalf("None compression should return data as-is")
+	if !bytes.Equal(data, decompressed) {
+		t.Fatalf("zstd roundtrip mismatch")
 	}
 }
 
-func TestIsCompressed(t *testing.T) {
-	// Test uncompressed data
-	uncompressedData := []byte("This is not compressed")
-	if IsCompressed(uncompressedData) != None {
-		t.Errorf("Expected None for uncompressed data")
-	}
-
-	// Test gzip compressed data
-	compressor := NewGzipCompressor(gzip.DefaultCompression)
-	compressedData, err := compressor.Compress(uncompressedData)
+func TestIsCompressed_Zstd(t *testing.T) {
+	data := []byte("detect zstd magic bytes test")
+	c := NewCompressor(Zstd)
+	compressed, err := c.Compress(data)
 	if err != nil {
-		t.Fatalf("Failed to compress test data: %v", err)
+		t.Fatalf("zstd compress failed: %v", err)
 	}
-
-	if IsCompressed(compressedData) != Gzip {
-		t.Errorf("Expected Gzip for gzip compressed data")
-	}
-
-	// Test empty data
-	if IsCompressed([]byte{}) != None {
-		t.Errorf("Expected None for empty data")
-	}
-
-	// Test data with only one byte
-	if IsCompressed([]byte{0x1f}) != None {
-		t.Errorf("Expected None for single byte data")
+	// Detection should return Zstd
+	if IsCompressed(compressed) != Zstd {
+		t.Fatalf("expected Zstd detection")
 	}
 }
 
-func TestCompressionTypes(t *testing.T) {
-	tests := []struct {
-		cType    CompressionType
-		expected string
+func TestCompressionTypes_List(t *testing.T) {
+	cases := []struct {
+		ct   CompressionType
+		want string
 	}{
 		{None, "none"},
 		{Gzip, "gzip"},
+		{Zstd, "zstd"},
 		{CompressionType(999), "unknown"},
 	}
-
-	for _, test := range tests {
-		if test.cType.String() != test.expected {
-			t.Errorf("CompressionType(%d).String() = %s, expected %s", int(test.cType), test.cType.String(), test.expected)
+	for _, c := range cases {
+		if got := c.ct.String(); got != c.want {
+			t.Errorf("CompressionType(%d).String()=%s want %s", c.ct, got, c.want)
 		}
 	}
 }

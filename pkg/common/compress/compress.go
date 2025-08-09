@@ -5,6 +5,8 @@ import (
 	"compress/gzip"
 	"fmt"
 	"io"
+
+	"github.com/klauspost/compress/zstd"
 )
 
 // CompressionType represents the type of compression algorithm
@@ -15,6 +17,8 @@ const (
 	None CompressionType = iota
 	// Gzip represents gzip compression
 	Gzip
+	// Zstd represents zstandard compression
+	Zstd
 )
 
 // String returns the string representation of the compression type
@@ -24,6 +28,8 @@ func (ct CompressionType) String() string {
 		return "none"
 	case Gzip:
 		return "gzip"
+	case Zstd:
+		return "zstd"
 	default:
 		return "unknown"
 	}
@@ -91,6 +97,62 @@ func (gc *gzipCompressor) Type() CompressionType {
 	return Gzip
 }
 
+// zstdCompressor implements Compressor interface using zstandard
+type zstdCompressor struct {
+	encoderLevel zstd.EncoderLevel
+}
+
+// NewZstdCompressorMax creates a new zstd compressor with maximum compression
+func NewZstdCompressorMax() Compressor {
+	return &zstdCompressor{encoderLevel: zstd.SpeedBestCompression}
+}
+
+// NewZstdCompressor creates a new zstd compressor with specified compression level
+func NewZstdCompressor(level zstd.EncoderLevel) Compressor {
+	return &zstdCompressor{encoderLevel: level}
+}
+
+// Compress compresses data using zstandard
+func (zc *zstdCompressor) Compress(data []byte) ([]byte, error) {
+	var buf bytes.Buffer
+	enc, err := zstd.NewWriter(&buf, zstd.WithEncoderLevel(zc.encoderLevel))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create zstd encoder: %w", err)
+	}
+
+	if _, err := enc.Write(data); err != nil {
+		enc.Close()
+		return nil, fmt.Errorf("failed to write data to zstd encoder: %w", err)
+	}
+
+	if err := enc.Close(); err != nil {
+		return nil, fmt.Errorf("failed to close zstd encoder: %w", err)
+	}
+
+	return buf.Bytes(), nil
+}
+
+// Decompress decompresses zstandard data
+func (zc *zstdCompressor) Decompress(data []byte) ([]byte, error) {
+	dec, err := zstd.NewReader(bytes.NewReader(data))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create zstd decoder: %w", err)
+	}
+	defer dec.Close()
+
+	result, err := io.ReadAll(dec)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read from zstd decoder: %w", err)
+	}
+
+	return result, nil
+}
+
+// Type returns the compression type
+func (zc *zstdCompressor) Type() CompressionType {
+	return Zstd
+}
+
 // noneCompressor implements Compressor interface with no compression
 type noneCompressor struct{}
 
@@ -119,6 +181,8 @@ func NewCompressor(cType CompressionType) Compressor {
 	switch cType {
 	case Gzip:
 		return NewGzipCompressor(gzip.DefaultCompression)
+	case Zstd:
+		return NewZstdCompressorMax()
 	case None:
 		return NewNoneCompressor()
 	default:
@@ -126,9 +190,9 @@ func NewCompressor(cType CompressionType) Compressor {
 	}
 }
 
-// NewDefaultCompressor creates a new compressor with default settings (gzip with default compression)
+// NewDefaultCompressor creates a new compressor with default settings (zstd with max compression)
 func NewDefaultCompressor() Compressor {
-	return NewGzipCompressor(gzip.DefaultCompression)
+	return NewZstdCompressorMax()
 }
 
 // CompressWithType compresses data using the specified compression type
@@ -152,6 +216,11 @@ func IsCompressed(data []byte) CompressionType {
 	// Check for gzip magic number (0x1f, 0x8b)
 	if data[0] == 0x1f && data[1] == 0x8b {
 		return Gzip
+	}
+
+	// Check for zstd frame magic (0x28, 0xB5, 0x2F, 0xFD)
+	if len(data) >= 4 && data[0] == 0x28 && data[1] == 0xB5 && data[2] == 0x2F && data[3] == 0xFD {
+		return Zstd
 	}
 
 	return None
