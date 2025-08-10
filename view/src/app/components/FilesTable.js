@@ -13,6 +13,7 @@ export function FilesTable({ files, loading, refreshAll, formatFileSize, formatD
       <TableHead>
         <TableRow>
           <TableCell>Filename</TableCell>
+          <TableCell>Type</TableCell>{/* New MIME type column */}
           <TableCell>Size</TableCell>
           <TableCell>Uploaded</TableCell>
           <TableCell align='right'>Actions</TableCell>
@@ -22,6 +23,7 @@ export function FilesTable({ files, loading, refreshAll, formatFileSize, formatD
         {files.map(f => (
           <TableRow key={f.id} hover>
             <TableCell sx={{ cursor: isPreviewable(f)?'pointer':'default', color: isPreviewable(f)?'primary.main':'inherit' }} onClick={()=> isPreviewable(f)&&openPreview(f)}>{f.filename}</TableCell>
+            <TableCell>{f.mime || '-'}</TableCell>
             <TableCell>{formatFileSize(f.size)}</TableCell>
             <TableCell>{formatDate(f.created_at)}</TableCell>
             <TableCell align='right'>
