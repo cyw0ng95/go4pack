@@ -3,6 +3,7 @@ package restful
 import (
 	"context"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -27,10 +28,13 @@ func WithShutdownTimeout(d time.Duration) Option { return func(s *Server) { s.sh
 // NewServer creates a new RESTful server instance
 func NewServer(opts ...Option) *Server {
 	g := gin.New()
-	g.Use(gin.Recovery())
+	// route panics to zerolog
+	g.Use(RecoveryWithLogger())
 	g.Use(CORSMiddleware())
 	g.Use(RequestLogger())
-	g.Use(gin.Logger())
+	// direct gin internal output to zerolog (avoid duplicate default logger middleware)
+	gin.DefaultWriter = zerologWriter{}
+	gin.DefaultErrorWriter = zerologWriter{}
 
 	s := &Server{
 		Engine:      g,
@@ -43,6 +47,22 @@ func NewServer(opts ...Option) *Server {
 
 	s.httpServer = &http.Server{Addr: s.addr, Handler: s.Engine}
 	return s
+}
+
+// zerologWriter adapts gin's writer to zerolog
+type zerologWriter struct{}
+
+func (zerologWriter) Write(p []byte) (int, error) {
+	msg := strings.TrimSpace(string(p))
+	if msg != "" {
+		logger.GetLogger().Info().Msg(msg)
+	}
+	return len(p), nil
+}
+
+// RecoveryWithLogger logs panic with stack/latency via zerolog (simplified)
+func RecoveryWithLogger() gin.HandlerFunc {
+	return gin.RecoveryWithWriter(zerologWriter{})
 }
 
 // Start runs the server asynchronously
