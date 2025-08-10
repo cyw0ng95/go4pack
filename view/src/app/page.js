@@ -4,11 +4,14 @@ import { useState, useEffect, useCallback } from 'react'
 import {
   AppBar, Toolbar, Typography, Container, Grid, Card, CardContent, Box, Button,
   CircularProgress, Table, TableHead, TableRow, TableCell, TableBody, Paper,
-  Chip, Stack, Divider, IconButton, Snackbar, Alert, LinearProgress
+  Chip, Stack, Divider, IconButton, Snackbar, Alert, LinearProgress,
+  Dialog, DialogTitle, DialogContent, IconButton as MIconButton
 } from '@mui/material'
 import CloudUploadIcon from '@mui/icons-material/CloudUpload'
 import RefreshIcon from '@mui/icons-material/Refresh'
 import DownloadIcon from '@mui/icons-material/Download'
+import PlayArrowIcon from '@mui/icons-material/PlayArrow'
+import CloseIcon from '@mui/icons-material/Close'
 
 export default function Home() {
   const [files, setFiles] = useState([])
@@ -22,6 +25,8 @@ export default function Home() {
   const [uploadQueue, setUploadQueue] = useState([]) // filenames queued
   const [uploadProgress, setUploadProgress] = useState({ done: 0, total: 0 })
   const [uploadSession, setUploadSession] = useState(null) // {start, end, files:[{name,size,start,end,durationMs}]}
+  const [previewFile, setPreviewFile] = useState(null)
+  const [previewOpen, setPreviewOpen] = useState(false)
 
   const API_BASE = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:8080/api/fileio'
 
@@ -235,6 +240,10 @@ export default function Home() {
     )
   }
 
+  const openPreview = (file) => { setPreviewFile(file); setPreviewOpen(true) }
+  const closePreview = () => { setPreviewOpen(false); setPreviewFile(null) }
+  const isVideo = (f) => !!f && typeof f.mime === 'string' && f.mime.startsWith('video/')
+
   return (
     <Box sx={{ flexGrow:1, bgcolor:'background.default', minHeight:'100vh' }}>
       <AppBar position='static' color='primary' elevation={1}>
@@ -361,10 +370,15 @@ export default function Home() {
                   <TableBody>
                     {files.map(f => (
                       <TableRow key={f.id} hover>
-                        <TableCell>{f.filename}</TableCell>
+                        <TableCell sx={{ cursor: isVideo(f)?'pointer':'default', color: isVideo(f)?'primary.main':'inherit' }} onClick={()=> isVideo(f)&&openPreview(f)}>{f.filename}</TableCell>
                         <TableCell>{formatFileSize(f.size)}</TableCell>
                         <TableCell>{formatDate(f.created_at)}</TableCell>
                         <TableCell align='right'>
+                          {isVideo(f) && (
+                            <IconButton size='small' color='secondary' onClick={()=>openPreview(f)} sx={{ mr:0.5 }}>
+                              <PlayArrowIcon fontSize='inherit'/>
+                            </IconButton>
+                          )}
                           <IconButton size='small' color='primary' onClick={()=> window.open(`${API_BASE}/download/${encodeURIComponent(f.filename)}`,'_blank')}>
                             <DownloadIcon fontSize='inherit' />
                           </IconButton>
@@ -382,6 +396,27 @@ export default function Home() {
           </Grid>
         </Grid>
       </Container>
+      <Dialog open={previewOpen} onClose={closePreview} maxWidth='md' fullWidth>
+        <DialogTitle sx={{ pr:5 }}>
+          {previewFile?.filename}
+          <MIconButton onClick={closePreview} size='small' sx={{ position:'absolute', right:8, top:8 }}><CloseIcon fontSize='small'/></MIconButton>
+        </DialogTitle>
+        <DialogContent dividers>
+          {isVideo(previewFile) ? (
+            <Box sx={{ aspectRatio:'16/9', width:'100%', bgcolor:'black' }}>
+              <video
+                key={previewFile?.id}
+                controls
+                autoPlay
+                style={{ width:'100%', height:'100%', objectFit:'contain' }}
+                src={`${API_BASE}/download/${encodeURIComponent(previewFile?.filename || '')}`}
+              />
+            </Box>
+          ) : (
+            <Typography variant='body2' color='text.secondary'>No preview available.</Typography>
+          )}
+        </DialogContent>
+      </Dialog>
       <Snackbar open={showError} autoHideDuration={4000} onClose={()=>setShowError(false)} anchorOrigin={{ vertical:'bottom', horizontal:'right' }}>
         <Alert severity='error' onClose={()=>setShowError(false)} variant='filled' sx={{ fontSize:12 }}>
           {error}
