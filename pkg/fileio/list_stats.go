@@ -9,9 +9,9 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	elfutil "go4pack/pkg/common/elf"
 	"go4pack/pkg/common/fs"
 	"go4pack/pkg/common/logger"
-	elfutil "go4pack/pkg/common/elf"
 )
 
 func listHandler(c *gin.Context) {

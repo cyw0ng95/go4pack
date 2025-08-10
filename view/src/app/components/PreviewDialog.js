@@ -4,8 +4,9 @@ import { Dialog, DialogTitle, DialogContent, Box, Typography, IconButton as MIco
 import CloseIcon from '@mui/icons-material/Close'
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore'
 import ContentCopyIcon from '@mui/icons-material/ContentCopy'
+import DescriptionIcon from '@mui/icons-material/Description'
 
-export function PreviewDialog({ open, file, onClose, API_BASE, isVideo, isPdf, isElf }) {
+export function PreviewDialog({ open, file, onClose, API_BASE, isVideo, isPdf, isElf, isText }) {
   const status = file?.analysis_status
   const elfObj = (isElf(file) && file?.elf_analysis) ? safeParse(file.elf_analysis) : null
   const characteristics = elfObj?.characteristics || {}
@@ -48,6 +49,10 @@ export function PreviewDialog({ open, file, onClose, API_BASE, isVideo, isPdf, i
         ) : isElf(file) ? (
           <Box sx={{ width:'100%', maxHeight:'75vh', overflow:'auto', fontSize:13 }}>
             {renderElfContent()}
+          </Box>
+        ) : isText(file) ? (
+          <Box sx={{ width:'100%', maxHeight:'75vh', overflow:'auto', fontFamily:'monospace', fontSize:13, whiteSpace:'pre', p:1, bgcolor:'grey.900', color:'grey.100' }}>
+            <TextContent file={file} API_BASE={API_BASE} />
           </Box>
         ) : (
           <Typography variant='body2' color='text.secondary'>No preview available.</Typography>
@@ -160,3 +165,16 @@ function syntaxHighlight(jsonStr){
   })
 }
 function formatVal(v){ if(Array.isArray(v)) return v.join(', '); if(typeof v==='object') return JSON.stringify(v); return String(v) }
+
+function TextContent({ file, API_BASE }) {
+  const [content,setContent] = React.useState('Loading...')
+  React.useEffect(()=>{
+    let active = true
+    fetch(`${API_BASE}/download/${encodeURIComponent(file.filename)}`)
+      .then(r=> r.ok? r.text(): Promise.reject())
+      .then(t=> { if(active) setContent(t.slice(0,20000)) })
+      .catch(()=> { if(active) setContent('Failed to load text.') })
+    return ()=> { active=false }
+  }, [file, API_BASE])
+  return <>{content}</>
+}

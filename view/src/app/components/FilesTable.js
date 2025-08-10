@@ -7,8 +7,9 @@ import PlayArrowIcon from '@mui/icons-material/PlayArrow'
 import PictureAsPdfIcon from '@mui/icons-material/PictureAsPdf'
 import CodeIcon from '@mui/icons-material/Code'
 import SortIcon from '@mui/icons-material/Sort'
+import DescriptionIcon from '@mui/icons-material/Description'
 
-export function FilesTable({ files, loading, refreshAll, formatFileSize, formatDate, isPreviewable, isVideo, isPdf, isElf, openPreview, API_BASE }) {
+export function FilesTable({ files, loading, refreshAll, formatFileSize, formatDate, isPreviewable, isVideo, isPdf, isElf, isText, openPreview, API_BASE }) {
   const [query, setQuery] = React.useState('')
   const [filter, setFilter] = React.useState('all') // all | video | pdf | elf
   const [sort, setSort] = React.useState({ field: 'created_at', dir: 'desc' })
@@ -81,6 +82,11 @@ export function FilesTable({ files, loading, refreshAll, formatFileSize, formatD
                 {isElf(f) && (
                   <IconButton size='small' color='secondary' onClick={()=>openPreview(f)} sx={{ mr:0.5 }}>
                     <CodeIcon fontSize='inherit'/>
+                  </IconButton>
+                )}
+                {isText(f) && (
+                  <IconButton size='small' color='secondary' onClick={()=>openPreview(f)} sx={{ mr:0.5 }}>
+                    <DescriptionIcon fontSize='inherit'/>
                   </IconButton>
                 )}
                 <IconButton size='small' color='primary' onClick={()=> window.open(`${API_BASE}/download/${encodeURIComponent(f.filename)}`,'_blank')}>

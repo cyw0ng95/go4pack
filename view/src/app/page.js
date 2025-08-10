@@ -224,7 +224,8 @@ export default function Home() {
   const isVideo = (f) => !!f && typeof f.mime === 'string' && f.mime.startsWith('video/')
   const isPdf = (f) => !!f && typeof f.mime === 'string' && f.mime === 'application/pdf'
   const isElf = (f) => !!f && (f.is_elf || !!f.elf_analysis)
-  const isPreviewable = (f) => isVideo(f) || isPdf(f) || isElf(f)
+  const isText = (f) => !!f && typeof f.mime === 'string' && f.mime.startsWith('text/plain')
+  const isPreviewable = (f) => isVideo(f) || isPdf(f) || isElf(f) || isText(f)
 
   const handlePageChange = (delta) => { setPage(p => Math.min(Math.max(1, p+delta), pages||1)) }
   const handlePageSizeChange = (e) => { setPageSize(parseInt(e.target.value)||50); setPage(1) }
@@ -277,7 +278,7 @@ export default function Home() {
                   </Stack>
                 </Stack>
               </Stack>
-              <FilesTable files={files} loading={loading} refreshAll={refreshAll} formatFileSize={formatFileSize} formatDate={formatDate} isVideo={isVideo} isPdf={isPdf} isElf={isElf} isPreviewable={isPreviewable} openPreview={openPreview} API_BASE={API_BASE} />
+              <FilesTable files={files} loading={loading} refreshAll={refreshAll} formatFileSize={formatFileSize} formatDate={formatDate} isVideo={isVideo} isPdf={isPdf} isElf={isElf} isText={isText} isPreviewable={isPreviewable} openPreview={openPreview} API_BASE={API_BASE} />
             </Paper>
           </Grid>
           <Grid item xs={12}>
@@ -285,7 +286,7 @@ export default function Home() {
           </Grid>
         </Grid>
       </Container>
-      <PreviewDialog open={previewOpen} file={previewFile} onClose={closePreview} API_BASE={API_BASE} isVideo={isVideo} isPdf={isPdf} isElf={isElf} />
+      <PreviewDialog open={previewOpen} file={previewFile} onClose={closePreview} API_BASE={API_BASE} isVideo={isVideo} isPdf={isPdf} isElf={isElf} isText={isText} />
       <Snackbar open={showError} autoHideDuration={4000} onClose={()=>setShowError(false)} anchorOrigin={{ vertical:'bottom', horizontal:'right' }}>
         <Alert severity='error' onClose={()=>setShowError(false)} variant='filled' sx={{ fontSize:12 }}>
           {error}
