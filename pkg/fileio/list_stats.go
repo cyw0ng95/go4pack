@@ -47,10 +47,8 @@ func listHandler(c *gin.Context) {
 	}
 	resp := make([]gin.H, 0, len(files))
 	for _, f := range files {
-		isELF := f.AnalysisStatus == "pending" || f.AnalysisStatus == "error"
-		if f.AnalysisStatus == "done" {
-			isELF = true
-		}
+		// Consider file ELF only if analysis was completed or attempted (done or error)
+		isELF := f.MIME == "application/x-sharedlib"
 		isGzip := (f.MIME == "application/gzip" || f.MIME == "application/x-gzip")
 		avail := []string{}
 		if isELF {

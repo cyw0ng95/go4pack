@@ -203,25 +203,28 @@ export default function Home() {
     } catch (_) { /* ignore */ }
   }
 
-  const openPreview = async (file) => {
-    // ELF analysis via new meta interface
-    if ((file.is_elf || (file.available_analysis||[]).includes('elf')) && !file.elf_analysis) {
-      await fetchAnalysis(file, 'elf', 'elf_analysis')
-    }
-    // GZIP analysis via new meta interface
-    if ((isGzip(file) || (file.available_analysis||[]).includes('gzip')) && !file.gzip_analysis) {
-      await fetchAnalysis(file, 'gzip', 'gzip_analysis')
-    }
-    setPreviewFile({ ...file })
-    setPreviewOpen(true)
-  }
-  const closePreview = () => { setPreviewOpen(false); setPreviewFile(null) }
+  // File type helpers (moved above openPreview so they are defined before use)
   const isVideo = (f) => !!f && typeof f.mime === 'string' && f.mime.startsWith('video/')
   const isPdf = (f) => !!f && typeof f.mime === 'string' && f.mime === 'application/pdf'
   const isElf = (f) => !!f && (f.is_elf || !!f.elf_analysis)
   const isText = (f) => !!f && typeof f.mime === 'string' && f.mime.startsWith('text/plain')
   const isGzip = (f) => !!f && typeof f.mime === 'string' && ['application/gzip','application/x-gzip'].includes(f.mime)
   const isPreviewable = (f) => isVideo(f) || isPdf(f) || isElf(f) || isText(f) || isGzip(f)
+
+  const openPreview = async (file) => {
+    if (!file) return
+    // Only fetch ELF analysis if the backend explicitly marked the file as ELF (avoid false positives from available_analysis list)
+    if (file.is_elf && !file.elf_analysis) {
+      await fetchAnalysis(file, 'elf', 'elf_analysis')
+    }
+    // Fetch GZIP analysis when mime indicates gzip (or already has gzip analysis pending)
+    if (isGzip(file) && !file.gzip_analysis) {
+      await fetchAnalysis(file, 'gzip', 'gzip_analysis')
+    }
+    setPreviewFile({ ...file })
+    setPreviewOpen(true)
+  }
+  const closePreview = () => { setPreviewOpen(false); setPreviewFile(null) }
 
   const handlePageChange = (delta) => { setPage(p => Math.min(Math.max(1, p+delta), pages||1)) }
   const handlePageSizeChange = (e) => { setPageSize(parseInt(e.target.value)||50); setPage(1) }
@@ -282,7 +285,7 @@ export default function Home() {
           </Grid>
         </Grid>
       </Container>
-      <PreviewDialog open={previewOpen} file={previewFile} onClose={closePreview} API_BASE={API_BASE} isVideo={isVideo} isPdf={isPdf} isElf={isElf} isText={isText} />
+      <PreviewDialog open={previewOpen} file={previewFile} onClose={closePreview} API_BASE={API_BASE} isVideo={isVideo} isPdf={isPdf} isElf={isElf} isText={isText} isGzip={isGzip} />
       <Snackbar open={showError} autoHideDuration={4000} onClose={()=>setShowError(false)} anchorOrigin={{ vertical:'bottom', horizontal:'right' }}>
         <Alert severity='error' onClose={()=>setShowError(false)} variant='filled' sx={{ fontSize:12 }}>
           {error}

@@ -6,12 +6,13 @@ import ExpandMoreIcon from '@mui/icons-material/ExpandMore'
 import ContentCopyIcon from '@mui/icons-material/ContentCopy'
 import DescriptionIcon from '@mui/icons-material/Description'
 
-export function PreviewDialog({ open, file, onClose, API_BASE, isVideo, isPdf, isElf, isText }) {
+export function PreviewDialog({ open, file, onClose, API_BASE, isVideo, isPdf, isElf, isText, isGzip }) {
   const status = file?.analysis_status
   const elfObj = (isElf(file) && file?.elf_analysis) ? safeParse(file.elf_analysis) : null
+  const gzipObj = (isGzip && isGzip(file) && file?.gzip_analysis) ? safeParse(file.gzip_analysis) : null
   const characteristics = elfObj?.characteristics || {}
   const chips = elfObj ? buildChips(characteristics) : []
-  const copyAll = () => { if (!elfObj) return; navigator.clipboard?.writeText(JSON.stringify(elfObj, null, 2)) }
+  const copyAll = () => { if (elfObj) navigator.clipboard?.writeText(JSON.stringify(elfObj, null, 2)); else if (gzipObj) navigator.clipboard?.writeText(JSON.stringify(gzipObj, null, 2)) }
   const renderElfContent = () => {
     if (status === 'pending') return <Typography variant='body2' color='text.secondary'>Analysis in progress...</Typography>
     if (status === 'error') return <Typography variant='body2' color='error'>Failed to analyze ELF.</Typography>
@@ -28,6 +29,46 @@ export function PreviewDialog({ open, file, onClose, API_BASE, isVideo, isPdf, i
           {chips.map(c=> <Chip key={c.label} label={c.label} color={c.color} size='small' variant={c.variant||'filled'} />)}
         </Stack>
         <ElfAccordionView obj={elfObj} />
+      </>
+    )
+  }
+  const renderGzipContent = () => {
+    if (status === 'pending') return <Typography variant='body2' color='text.secondary'>Analysis in progress...</Typography>
+    if (!gzipObj) return <Typography variant='body2' color='text.secondary'>No gzip data.</Typography>
+    const entries = gzipObj.tar_entries || []
+    return (
+      <>
+        <Alert severity='info' sx={{ mb:1, display:'flex', alignItems:'center', justifyContent:'space-between' }}>
+          GZIP / TAR Analysis
+          <Tooltip title='Copy JSON'>
+            <MIconButton size='small' onClick={copyAll} color='inherit'><ContentCopyIcon fontSize='inherit'/></MIconButton>
+          </Tooltip>
+        </Alert>
+        <Typography variant='caption' sx={{ display:'block', mb:1 }}>
+          Entries: {gzipObj.tar_count || entries.length} | Uncompressed Size: {formatBytes(gzipObj.uncompressed_size)} {gzipObj.truncated && '(truncated list)'}
+        </Typography>
+        <Box sx={{ maxHeight: '70vh', overflow:'auto', border:'1px solid', borderColor:'divider', borderRadius:1 }}>
+          <Box component='table' sx={{ width:'100%', borderCollapse:'collapse', fontSize:12, '& th,& td':{ borderBottom:'1px solid', borderColor:'divider', py:0.5, px:0.75 }, '& th':{ position:'sticky', top:0, bgcolor:'background.paper' } }}>
+            <thead>
+              <tr>
+                <th style={{ textAlign:'left' }}>Name</th>
+                <th style={{ textAlign:'right', width:100 }}>Size</th>
+                <th style={{ textAlign:'center', width:60 }}>Type</th>
+                <th style={{ textAlign:'right', width:90 }}>Mode</th>
+              </tr>
+            </thead>
+            <tbody>
+              {entries.map((e,i)=> (
+                <tr key={i}>
+                  <td><code>{truncateMid(e.name, 120)}</code></td>
+                  <td style={{ textAlign:'right' }}>{formatBytes(e.size)}</td>
+                  <td style={{ textAlign:'center' }}>{e.type}</td>
+                  <td style={{ textAlign:'right' }}>{e.mode?.toString(8)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </Box>
+        </Box>
       </>
     )
   }
@@ -50,9 +91,13 @@ export function PreviewDialog({ open, file, onClose, API_BASE, isVideo, isPdf, i
           <Box sx={{ width:'100%', maxHeight:'75vh', overflow:'auto', fontSize:13 }}>
             {renderElfContent()}
           </Box>
-        ) : isText(file) ? (
+        ) : (isText(file)) ? (
           <Box sx={{ width:'100%', maxHeight:'75vh', overflow:'auto', fontFamily:'monospace', fontSize:13, whiteSpace:'pre', p:1, bgcolor:'grey.900', color:'grey.100' }}>
             <TextContent file={file} API_BASE={API_BASE} />
+          </Box>
+        ) : (isGzip && isGzip(file)) ? (
+          <Box sx={{ width:'100%', maxHeight:'75vh', overflow:'auto', fontSize:13 }}>
+            {renderGzipContent()}
           </Box>
         ) : (
           <Typography variant='body2' color='text.secondary'>No preview available.</Typography>
@@ -145,6 +190,8 @@ function ArrayPreview({ data }){
   )
 }
 function truncate(s){ return s.length>160? s.slice(0,157)+'…': s }
+function truncateMid(s, max){ if(!s) return s; if(s.length<=max) return s; const half=Math.floor((max-1)/2); return s.slice(0,half)+'…'+s.slice(s.length-half) }
+function formatBytes(n){ if(!n && n!==0) return '-'; const k=1024; const u=['B','KB','MB','GB','TB']; const i=Math.floor(Math.log(n)/Math.log(k)); return (n/Math.pow(k,i)).toFixed(2)+' '+u[i] }
 
 function PreJSON({ data }){
   return (
