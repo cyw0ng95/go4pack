@@ -57,7 +57,9 @@ func RegisterRoutes(rg *gin.RouterGroup) {
 	rg.POST("/upload/stream", streamUploadHandler)
 }
 
-func isPreviewableMIME(m string) bool { return strings.HasPrefix(m, "video/") || m == "application/pdf" }
+func isPreviewableMIME(m string) bool {
+	return strings.HasPrefix(m, "video/") || m == "application/pdf"
+}
 
 func uploadHandler(c *gin.Context) {
 	fileHdr, header, err := c.Request.FormFile("file")
@@ -89,7 +91,12 @@ func uploadHandler(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "store file failed"})
 		return
 	}
-
+	// Verify object is regular
+	if vErr := fsys.VerifyHashedRegular(md5sum); vErr != nil {
+		_ = fsys.DeleteObject(md5sum) // cleanup
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid stored object"})
+		return
+	}
 	compressedSize, err := fsys.GetHashedObjectSize(md5sum)
 	if err != nil {
 		logger.GetLogger().Warn().Err(err).Str("hash", md5sum).Msg("failed to get compressed size")
@@ -162,7 +169,9 @@ func downloadHandler(c *gin.Context) {
 	}
 	// inline for previewable types
 	dispType := "attachment"
-	if isPreviewableMIME(fr.MIME) { dispType = "inline" }
+	if isPreviewableMIME(fr.MIME) {
+		dispType = "inline"
+	}
 	c.Header("Content-Disposition", dispType+"; filename="+filename)
 	c.Header("Content-Length", strconv.FormatInt(fr.Size, 10))
 	c.Header("Content-Type", fr.MIME)
@@ -171,12 +180,30 @@ func downloadHandler(c *gin.Context) {
 
 func downloadByMD5Handler(c *gin.Context) {
 	md5v := c.Param("md5")
-	fsys, err := fs.New(); if err != nil { c.JSON(http.StatusInternalServerError, gin.H{"error":"filesystem init failed"}); return }
-	db, err := ensureDB(); if err != nil { c.JSON(http.StatusInternalServerError, gin.H{"error":"db init failed"}); return }
+	fsys, err := fs.New()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "filesystem init failed"})
+		return
+	}
+	db, err := ensureDB()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "db init failed"})
+		return
+	}
 	var fr FileRecord
-	if err := db.Where("md5 = ?", md5v).First(&fr).Error; err != nil { c.JSON(http.StatusNotFound, gin.H{"error":"file not found"}); return }
-	data, rErr := fsys.ReadObjectHashed(fr.MD5); if rErr != nil { c.JSON(http.StatusInternalServerError, gin.H{"error":"read failed"}); return }
-	dispType := "attachment"; if isPreviewableMIME(fr.MIME) { dispType = "inline" }
+	if err := db.Where("md5 = ?", md5v).First(&fr).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "file not found"})
+		return
+	}
+	data, rErr := fsys.ReadObjectHashed(fr.MD5)
+	if rErr != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "read failed"})
+		return
+	}
+	dispType := "attachment"
+	if isPreviewableMIME(fr.MIME) {
+		dispType = "inline"
+	}
 	c.Header("Content-Disposition", dispType+"; filename="+fr.Filename)
 	c.Header("Content-Length", strconv.FormatInt(fr.Size, 10))
 	c.Header("Content-Type", fr.MIME)
@@ -337,14 +364,14 @@ func uploadMultiHandler(c *gin.Context) {
 	db, dbErr := ensureDB() // optional, continue without DB if fails
 
 	type result struct {
-		Filename        string  `json:"filename"`
-		OriginalSize    int64   `json:"original_size"`
-		CompressedSize  int64   `json:"compressed_size"`
-		CompressionType string  `json:"compression_type"`
+		Filename         string  `json:"filename"`
+		OriginalSize     int64   `json:"original_size"`
+		CompressedSize   int64   `json:"compressed_size"`
+		CompressionType  string  `json:"compression_type"`
 		CompressionRatio float64 `json:"compression_ratio"`
-		MD5             string  `json:"md5"`
-		MIME            string  `json:"mime"`
-		Error           string  `json:"error,omitempty"`
+		MD5              string  `json:"md5"`
+		MIME             string  `json:"mime"`
+		Error            string  `json:"error,omitempty"`
 	}
 
 	results := make([]result, len(files))
@@ -382,6 +409,10 @@ func uploadMultiHandler(c *gin.Context) {
 
 			if err := fsys.WriteObjectHashedWithMIME(res.MD5, data, res.MIME); err != nil {
 				res.Error = "store failed"
+				return
+			}
+			if vErr := fsys.VerifyHashedRegular(res.MD5); vErr != nil {
+				res.Error = "invalid stored object"
 				return
 			}
 			cs, err := fsys.GetHashedObjectSize(res.MD5)
@@ -526,6 +557,11 @@ func streamUploadHandler(c *gin.Context) {
 	_, _, err = fsys.CommitTempAsHashed(finalTempPath, md5sum)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "commit failed"})
+		return
+	}
+	if vErr := fsys.VerifyHashedRegular(md5sum); vErr != nil {
+		_ = fsys.DeleteObject(md5sum)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid stored object"})
 		return
 	}
 	compressedSize, _ := fsys.GetHashedObjectSize(md5sum)
