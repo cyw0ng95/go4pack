@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect } from 'react'
 import {
   AppBar, Toolbar, Typography, Container, Grid, Card, CardContent, Box, Button,
   CircularProgress, Paper, Stack, IconButton, Snackbar, Alert, LinearProgress,
@@ -18,28 +18,42 @@ import { StatsCards } from './components/StatsCards'
 import { UploadDropZone } from './components/UploadDropZone'
 import { FilesTable } from './components/FilesTable'
 import { PreviewDialog } from './components/PreviewDialog'
+// Add hook imports
+import { useApi } from './hooks/useApi'
+import { useFiles } from './hooks/useFiles'
+import { useStats } from './hooks/useStats'
+import { usePool } from './hooks/usePool'
 
 export default function Home() {
-  const [files, setFiles] = useState([])
+  // Remove local state now handled by hooks
+  // const [files, setFiles] = useState([])
   const [uploading, setUploading] = useState(false)
-  const [loading, setLoading] = useState(false)
+  const [loading, setLoading] = useState(false) // will be overridden by hook loading
   const [dragOver, setDragOver] = useState(false)
-  const [stats, setStats] = useState(null)
-  const [statsLoading, setStatsLoading] = useState(false)
-  const [error, setError] = useState(null)
-  const [showError, setShowError] = useState(false)
+  // const [stats, setStats] = useState(null)
+  // const [statsLoading, setStatsLoading] = useState(false)
+  // const [error, setError] = useState(null)
+  // const [showError, setShowError] = useState(false)
   const [uploadQueue, setUploadQueue] = useState([])
   const [uploadProgress, setUploadProgress] = useState({ done: 0, total: 0 })
   const [uploadSession, setUploadSession] = useState(null)
   const [previewFile, setPreviewFile] = useState(null)
   const [previewOpen, setPreviewOpen] = useState(false)
-  const [poolStats, setPoolStats] = useState(null)
-  const [poolLoading, setPoolLoading] = useState(false)
-  const [page,setPage] = useState(1)
-  const [pageSize,setPageSize] = useState(50)
-  const [total,setTotal] = useState(0)
-  const [pages,setPages] = useState(0)
+  // const [poolStats, setPoolStats] = useState(null)
+  // const [poolLoading, setPoolLoading] = useState(false)
+  // const [page,setPage] = useState(1)
+  // const [pageSize,setPageSize] = useState(50)
+  // const [total,setTotal] = useState(0)
+  // const [pages,setPages] = useState(0)
   const API_BASE = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:8080/api/fileio'
+
+  // Hooks integration
+  const { error, showError, setShowError, handleErr } = useApi(API_BASE)
+  const { files, setFiles, loading: filesLoading, fetchFiles, page, pageSize, total, pages, setPage, setPageSize } = useFiles(API_BASE, handleErr)
+  const { stats, statsLoading, fetchStats } = useStats(API_BASE, handleErr)
+  const { poolStats } = usePool(API_BASE)
+
+  const effectiveLoading = filesLoading // unify naming
 
   const formatFileSize = (bytes) => {
     if (bytes === undefined || bytes === null) return '-'
@@ -50,36 +64,10 @@ export default function Home() {
   }
   const formatDate = (ds) => new Date(ds).toLocaleString()
 
-  const handleErr = (e) => { setError(e?.message || 'Error'); setShowError(true) }
+  // handleErr now from hook
 
-  const fetchFiles = useCallback(async () => {
-    setLoading(true)
-    try {
-      const r = await fetch(`${API_BASE}/list?page=${page}&page_size=${pageSize}`)
-      if (!r.ok) throw new Error(`list failed ${r.status}`)
-      const d = await r.json(); setFiles(d.files||[]); setTotal(d.total||0); setPages(d.pages||0)
-    } catch (e) { handleErr(e) } finally { setLoading(false) }
-  }, [API_BASE, page, pageSize])
+  // Removed local fetchFiles/fetchStats/fetchPool definitions (now in hooks)
 
-  const fetchStats = useCallback(async () => {
-    setStatsLoading(true)
-    try {
-      const r = await fetch(`${API_BASE}/stats`)
-      if (!r.ok) throw new Error(`stats failed ${r.status}`)
-      const d = await r.json(); setStats(d)
-    } catch (e) { handleErr(e) } finally { setStatsLoading(false) }
-  }, [API_BASE])
-
-  const fetchPool = useCallback(async () => {
-    try {
-      const r = await fetch(`${API_BASE.replace('/fileio','')}/pool/stats`)
-      if (!r.ok) throw new Error('pool stats failed')
-      const d = await r.json()
-      setPoolStats(prev => prev ? { ...prev, ...d.pool } : d.pool)
-    } catch(e){ /* ignore */ }
-  }, [API_BASE])
-
-  // Helper: decide if batch multi-upload is beneficial
   const shouldBatchMulti = (arr) => {
     if (arr.length < 5) return false
     const total = arr.reduce((a,b)=>a+b.size,0)
@@ -198,7 +186,7 @@ export default function Home() {
   const handleDrop = (e) => { e.preventDefault(); setDragOver(false); uploadFiles(e.dataTransfer.files) }
   const handleDrag = (e, over) => { e.preventDefault(); setDragOver(over) }
 
-  useEffect(()=>{ fetchFiles(); fetchStats(); fetchPool(); const iv = setInterval(()=>{ fetchPool() }, 1000); return ()=> clearInterval(iv) }, [fetchFiles, fetchStats, fetchPool])
+  useEffect(()=>{ fetchFiles(); fetchStats() }, [fetchFiles, fetchStats])
 
   const refreshAll = () => { fetchFiles(); fetchStats() }
 
@@ -235,7 +223,7 @@ export default function Home() {
       <AppBar position='static' color='primary' elevation={1}>
         <Toolbar>
           <Typography variant='h6' sx={{ flexGrow:1 }}>Go4Pack File Manager</Typography>
-          <Button color='inherit' onClick={refreshAll} startIcon={<RefreshIcon />} disabled={loading||statsLoading}>Refresh</Button>
+          <Button color='inherit' onClick={refreshAll} startIcon={<RefreshIcon />} disabled={effectiveLoading||statsLoading}>Refresh</Button>
           <Button component='label' color='inherit' variant='outlined' startIcon={<CloudUploadIcon/>} disabled={uploading} sx={{ ml:2 }}>
             {uploading ? 'Uploading' : 'Upload'}
             <input hidden type='file' multiple onChange={handleFileChange} />
@@ -252,7 +240,7 @@ export default function Home() {
             </Typography>
           </Box>
         )}
-        <StatsCards stats={stats} statsLoading={statsLoading} formatFileSize={formatFileSize} poolStats={poolStats} poolLoading={poolLoading} />
+        <StatsCards stats={stats} statsLoading={statsLoading} formatFileSize={formatFileSize} poolStats={poolStats} />
         <Grid container spacing={3} sx={{ mt:1 }}>
           <Grid item xs={12}>
             <Card variant='outlined'>
@@ -267,7 +255,7 @@ export default function Home() {
               <Stack direction='row' alignItems='center' justifyContent='space-between' sx={{ mb:2 }}>
                 <Typography variant='h6'>Files</Typography>
                 <Stack direction='row' spacing={1} alignItems='center'>
-                  <Button size='small' startIcon={<RefreshIcon/>} onClick={refreshAll} disabled={loading||statsLoading}>Refresh</Button>
+                  <Button size='small' startIcon={<RefreshIcon/>} onClick={refreshAll} disabled={effectiveLoading||statsLoading}>Refresh</Button>
                   <select value={pageSize} onChange={handlePageSizeChange} style={{ fontSize:12, padding:'4px 6px' }}>
                     {[25,50,100,200].map(s=> <option key={s} value={s}>{s}/page</option>)}
                   </select>
@@ -278,7 +266,7 @@ export default function Home() {
                   </Stack>
                 </Stack>
               </Stack>
-              <FilesTable files={files} loading={loading} refreshAll={refreshAll} formatFileSize={formatFileSize} formatDate={formatDate} isVideo={isVideo} isPdf={isPdf} isElf={isElf} isText={isText} isPreviewable={isPreviewable} openPreview={openPreview} API_BASE={API_BASE} />
+              <FilesTable files={files} loading={effectiveLoading} refreshAll={refreshAll} formatFileSize={formatFileSize} formatDate={formatDate} isVideo={isVideo} isPdf={isPdf} isElf={isElf} isText={isText} isPreviewable={isPreviewable} openPreview={openPreview} API_BASE={API_BASE} />
             </Paper>
           </Grid>
           <Grid item xs={12}>
