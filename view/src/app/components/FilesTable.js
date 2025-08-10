@@ -11,7 +11,7 @@ import DescriptionIcon from '@mui/icons-material/Description'
 
 export function FilesTable({ files, loading, refreshAll, formatFileSize, formatDate, isPreviewable, isVideo, isPdf, isElf, isText, openPreview, API_BASE }) {
   const [query, setQuery] = React.useState('')
-  const [filter, setFilter] = React.useState('all') // all | video | pdf | elf
+  const [filter, setFilter] = React.useState('all') // all | video | pdf | elf | text
   const [sort, setSort] = React.useState({ field: 'created_at', dir: 'desc' })
   const maxSize = React.useMemo(()=> files.reduce((m,f)=> Math.max(m,f.size||0),0), [files])
 
@@ -20,6 +20,7 @@ export function FilesTable({ files, loading, refreshAll, formatFileSize, formatD
     if (filter === 'video' && !isVideo(f)) return false
     if (filter === 'pdf' && !isPdf(f)) return false
     if (filter === 'elf' && !isElf(f)) return false
+    if (filter === 'text' && !isText(f)) return false
     return true
   })
   const sorted = [...filtered].sort((a,b)=>{
@@ -41,7 +42,7 @@ export function FilesTable({ files, loading, refreshAll, formatFileSize, formatD
       <Box sx={{ display:'flex', flexWrap:'wrap', gap:1, mb:1 }}>
         <TextField size='small' placeholder='Search filename' value={query} onChange={e=>setQuery(e.target.value)} />
         <ButtonGroup size='small' variant='outlined'>
-          {['all','video','pdf','elf'].map(f=> <Button key={f} onClick={()=>setFilter(f)} variant={filter===f?'contained':'outlined'}>{f}</Button>)}
+          {['all','video','pdf','elf','text'].map(f=> <Button key={f} onClick={()=>setFilter(f)} variant={filter===f?'contained':'outlined'}>{f}</Button>)}
         </ButtonGroup>
       </Box>
       <Table size='small'>
