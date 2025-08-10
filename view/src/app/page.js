@@ -3,9 +3,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import {
   AppBar, Toolbar, Typography, Container, Grid, Card, CardContent, Box, Button,
-  CircularProgress, Table, TableHead, TableRow, TableCell, TableBody, Paper,
-  Chip, Stack, Divider, IconButton, Snackbar, Alert, LinearProgress,
-  Dialog, DialogTitle, DialogContent, IconButton as MIconButton
+  CircularProgress, Paper, Stack, IconButton, Snackbar, Alert, LinearProgress,
 } from '@mui/material'
 import CloudUploadIcon from '@mui/icons-material/CloudUpload'
 import RefreshIcon from '@mui/icons-material/Refresh'
@@ -13,6 +11,12 @@ import DownloadIcon from '@mui/icons-material/Download'
 import PlayArrowIcon from '@mui/icons-material/PlayArrow'
 import CloseIcon from '@mui/icons-material/Close'
 import PictureAsPdfIcon from '@mui/icons-material/PictureAsPdf'
+// New component imports
+import { UploadSessionCard } from './components/UploadSessionCard'
+import { StatsCards } from './components/StatsCards'
+import { UploadDropZone } from './components/UploadDropZone'
+import { FilesTable } from './components/FilesTable'
+import { PreviewDialog } from './components/PreviewDialog'
 
 export default function Home() {
   const [files, setFiles] = useState([])
@@ -23,12 +27,11 @@ export default function Home() {
   const [statsLoading, setStatsLoading] = useState(false)
   const [error, setError] = useState(null)
   const [showError, setShowError] = useState(false)
-  const [uploadQueue, setUploadQueue] = useState([]) // filenames queued
+  const [uploadQueue, setUploadQueue] = useState([])
   const [uploadProgress, setUploadProgress] = useState({ done: 0, total: 0 })
-  const [uploadSession, setUploadSession] = useState(null) // {start, end, files:[{name,size,start,end,durationMs}]}
+  const [uploadSession, setUploadSession] = useState(null)
   const [previewFile, setPreviewFile] = useState(null)
   const [previewOpen, setPreviewOpen] = useState(false)
-
   const API_BASE = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:8080/api/fileio'
 
   const formatFileSize = (bytes) => {
@@ -183,64 +186,6 @@ export default function Home() {
 
   const refreshAll = () => { fetchFiles(); fetchStats() }
 
-  // Helper metrics for session
-  const renderUploadSession = () => {
-    if (!uploadSession) return null
-    const { start, end, files: uf } = uploadSession
-    const now = Date.now()
-    const effectiveEnd = end || now
-    const durationMs = effectiveEnd - start
-    const totalBytes = uf.reduce((a,b)=> a + (b.size||0), 0)
-    const avgPerFile = uf.length ? (durationMs / uf.length) : 0
-    const throughput = durationMs > 0 ? (totalBytes / (durationMs/1000)) : 0 // bytes/sec
-    const fmtDur = (ms) => {
-      if (ms < 1000) return ms + ' ms'
-      const s = ms/1000
-      if (s < 60) return s.toFixed(2) + ' s'
-      const m = Math.floor(s/60); const rem = s - m*60
-      return `${m}m ${rem.toFixed(1)}s`
-    }
-    const fmtBps = (bps) => {
-      if (bps <= 0) return '-'
-      const k = 1024
-      const units = ['B/s','KB/s','MB/s','GB/s']
-      let i=0; while (bps >= k && i < units.length-1){ bps/=k; i++ }
-      return bps.toFixed(2)+' '+units[i]
-    }
-    return (
-      <Card variant='outlined' sx={{ mb:3 }}>
-        <CardContent>
-          <Stack direction='row' justifyContent='space-between' alignItems='flex-start' spacing={2} flexWrap='wrap'>
-            <Box sx={{ minWidth: 180 }}>
-              <Typography variant='overline'>Upload Session</Typography>
-              <Typography variant='body2'>Start: {new Date(start).toLocaleTimeString()}</Typography>
-              <Typography variant='body2'>End: {end ? new Date(end).toLocaleTimeString() : '…'}</Typography>
-              <Typography variant='body2'>Duration: {fmtDur(durationMs)}</Typography>
-            </Box>
-            <Box sx={{ minWidth: 180 }}>
-              <Typography variant='overline'>Performance</Typography>
-              <Typography variant='body2'>Files: {uploadProgress.total}</Typography>
-              <Typography variant='body2'>Completed: {uf.length}</Typography>
-              <Typography variant='body2'>Avg/File: {fmtDur(avgPerFile)}</Typography>
-              <Typography variant='body2'>Throughput: {fmtBps(throughput)}</Typography>
-            </Box>
-            <Box sx={{ minWidth: 220, flexGrow:1 }}>
-              <Typography variant='overline'>Recent Files</Typography>
-              <Stack spacing={0.5} sx={{ maxHeight:120, overflow:'auto', mt:0.5 }}>
-                {uf.slice(-5).reverse().map(f=> (
-                  <Typography key={f.name+f.start} variant='caption' sx={{ display:'block' }}>
-                    {f.name} • {formatFileSize(f.size)} • {fmtDur(f.durationMs)}
-                  </Typography>
-                ))}
-                {uf.length === 0 && <Typography variant='caption' color='text.secondary'>Pending…</Typography>}
-              </Stack>
-            </Box>
-          </Stack>
-        </CardContent>
-      </Card>
-    )
-  }
-
   const openPreview = (file) => { setPreviewFile(file); setPreviewOpen(true) }
   const closePreview = () => { setPreviewOpen(false); setPreviewFile(null) }
   const isVideo = (f) => !!f && typeof f.mime === 'string' && f.mime.startsWith('video/')
@@ -260,7 +205,7 @@ export default function Home() {
         </Toolbar>
       </AppBar>
       <Container maxWidth='xl' sx={{ py:4 }}>
-        {renderUploadSession()}
+        <UploadSessionCard uploadSession={uploadSession} uploadProgress={uploadProgress} formatFileSize={formatFileSize} />
         {uploading && (
           <Box sx={{ mb:3 }}>
             <LinearProgress variant={uploadProgress.total? 'determinate':'indeterminate'} value={uploadProgress.total? (uploadProgress.done / uploadProgress.total)*100 : undefined} />
@@ -269,171 +214,31 @@ export default function Home() {
             </Typography>
           </Box>
         )}
-        <Grid container spacing={3}>
-          <Grid item xs={12} md={3}>
-            <Card><CardContent>
-              <Typography variant='overline'>Files</Typography>
-              <Typography variant='h4' sx={{ mt:1 }}>{statsLoading? '…' : stats?.file_count ?? 0}</Typography>
-              <Typography variant='caption' color='text.secondary'>Unique {statsLoading? '…' : stats?.unique_hash_count ?? 0}</Typography>
-            </CardContent></Card>
-          </Grid>
-          <Grid item xs={12} md={3}>
-            <Card><CardContent>
-              <Typography variant='overline'>Original vs Compressed</Typography>
-              <Typography variant='body2' sx={{ mt:1 }}>{statsLoading||!stats? '…' : `${formatFileSize(stats.total_original_size)} → ${formatFileSize(stats.total_compressed_size)}`}</Typography>
-              <Typography variant='caption' color='text.secondary'>Saved {statsLoading||!stats? '…' : formatFileSize(stats.space_saved)}</Typography>
-            </CardContent></Card>
-          </Grid>
-          <Grid item xs={12} md={3}>
-            <Card><CardContent>
-              <Typography variant='overline'>Physical Usage</Typography>
-              <Typography variant='body2' sx={{ mt:1 }}>{statsLoading||!stats? '…' : formatFileSize(stats.physical_objects_size||0)}</Typography>
-              <Typography variant='caption' color='text.secondary'>Blobs {statsLoading||!stats? '…' : stats.physical_objects_count}</Typography>
-            </CardContent></Card>
-          </Grid>
-          <Grid item xs={12} md={3}>
-            <Card><CardContent>
-              <Typography variant='overline'>Compression Ratio</Typography>
-              <Typography variant='h5' sx={{ mt:1 }}>{statsLoading||!stats? '…' : (stats.compression_ratio? stats.compression_ratio.toFixed(2):'1.00')}</Typography>
-              <Typography variant='caption' color='text.secondary'>Saved % {statsLoading||!stats? '…' : (stats.space_saved_percentage? stats.space_saved_percentage.toFixed(2)+'%':'0%')}</Typography>
-            </CardContent></Card>
-          </Grid>
-
-          {stats && (
-            <Grid item xs={12} md={6}>
-              <Card>
-                <CardContent>
-                  <Typography variant='subtitle2' gutterBottom>Dedup Savings</Typography>
-                  <Stack spacing={1} sx={{ fontSize:12 }}>
-                    <Box>Logical Compressed: {formatFileSize(stats.total_compressed_size||0)}</Box>
-                    <Box>Physical Compressed: {formatFileSize(stats.physical_objects_size||0)}</Box>
-                    <Box>Dedup Saved (Compressed): {formatFileSize(stats.dedup_saved_compressed||0)} ({stats.dedup_saved_compr_pct? stats.dedup_saved_compr_pct.toFixed(2)+'%':'0%'})</Box>
-                    <Box>Dedup Saved (Original Basis): {formatFileSize(stats.dedup_saved_original||0)} ({stats.dedup_saved_original_pct? stats.dedup_saved_original_pct.toFixed(2)+'%':'0%'})</Box>
-                  </Stack>
-                </CardContent>
-              </Card>
-            </Grid>
-          )}
-          {stats && (
-            <Grid item xs={12} md={6}>
-              <Card>
-                <CardContent>
-                  <Typography variant='subtitle2' gutterBottom>Compression & MIME Types</Typography>
-                  <Typography variant='caption' color='text.secondary'>Compression</Typography>
-                  <Stack direction='row' spacing={1} flexWrap='wrap' sx={{ my:1 }}>
-                    {Object.entries(stats.compression_types||{}).map(([k,v]) => <Chip key={k} label={`${k||'unknown'}: ${v}`} size='small' color='primary' variant='outlined' />)}
-                  </Stack>
-                  <Divider sx={{ my:1 }} />
-                  <Typography variant='caption' color='text.secondary'>MIME</Typography>
-                  <Stack direction='row' spacing={1} flexWrap='wrap' sx={{ mt:1 }}>
-                    {Object.entries(stats.mime_types||{}).map(([k,v]) => <Chip key={k} label={`${k||'unknown'}: ${v}`} size='small' color='secondary' variant='outlined' />)}
-                  </Stack>
-                </CardContent>
-              </Card>
-            </Grid>
-          )}
-
+        <StatsCards stats={stats} statsLoading={statsLoading} formatFileSize={formatFileSize} />
+        <Grid container spacing={3} sx={{ mt:1 }}>
           <Grid item xs={12}>
             <Card variant='outlined'>
               <CardContent>
                 <Typography variant='h6' gutterBottom>Upload Files</Typography>
-                <Box
-                  onDragOver={(e)=>handleDrag(e,true)}
-                  onDragLeave={(e)=>handleDrag(e,false)}
-                  onDrop={handleDrop}
-                  sx={{ mt:2, border:'2px dashed', borderColor: dragOver? 'primary.main':'divider', p:6, textAlign:'center', borderRadius:2, bgcolor: dragOver? 'action.hover':'background.paper' }}
-                >
-                  <Typography variant='body1' color='text.secondary'>Drag & drop a file here or click Upload above</Typography>
-                  {uploading && <Box sx={{ mt:2 }}><CircularProgress size={28} /></Box>}
-                </Box>
+                <UploadDropZone onDrop={handleDrop} onDrag={handleDrag} dragOver={dragOver} uploading={uploading} />
               </CardContent>
             </Card>
           </Grid>
-
           <Grid item xs={12}>
             <Paper elevation={2} sx={{ p:2 }}>
               <Stack direction='row' alignItems='center' justifyContent='space-between' sx={{ mb:2 }}>
                 <Typography variant='h6'>Files</Typography>
                 <Button size='small' startIcon={<RefreshIcon/>} onClick={refreshAll} disabled={loading||statsLoading}>Refresh</Button>
               </Stack>
-              {loading ? (
-                <Box sx={{ textAlign:'center', py:6 }}><CircularProgress /></Box>
-              ) : files.length === 0 ? (
-                <Box sx={{ textAlign:'center', py:6, color:'text.secondary' }}>No files uploaded</Box>
-              ) : (
-                <Table size='small'>
-                  <TableHead>
-                    <TableRow>
-                      <TableCell>Filename</TableCell>
-                      <TableCell>Size</TableCell>
-                      <TableCell>Uploaded</TableCell>
-                      <TableCell align='right'>Actions</TableCell>
-                    </TableRow>
-                  </TableHead>
-                  <TableBody>
-                    {files.map(f => (
-                      <TableRow key={f.id} hover>
-                        <TableCell sx={{ cursor: isPreviewable(f)?'pointer':'default', color: isPreviewable(f)?'primary.main':'inherit' }} onClick={()=> isPreviewable(f)&&openPreview(f)}>{f.filename}</TableCell>
-                        <TableCell>{formatFileSize(f.size)}</TableCell>
-                        <TableCell>{formatDate(f.created_at)}</TableCell>
-                        <TableCell align='right'>
-                          {isVideo(f) && (
-                            <IconButton size='small' color='secondary' onClick={()=>openPreview(f)} sx={{ mr:0.5 }}>
-                              <PlayArrowIcon fontSize='inherit'/>
-                            </IconButton>
-                          )}
-                          {isPdf(f) && (
-                            <IconButton size='small' color='secondary' onClick={()=>openPreview(f)} sx={{ mr:0.5 }}>
-                              <PictureAsPdfIcon fontSize='inherit'/>
-                            </IconButton>
-                          )}
-                          <IconButton size='small' color='primary' onClick={()=> window.open(`${API_BASE}/download/${encodeURIComponent(f.filename)}`,'_blank')}>
-                            <DownloadIcon fontSize='inherit' />
-                          </IconButton>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              )}
+              <FilesTable files={files} loading={loading} refreshAll={refreshAll} formatFileSize={formatFileSize} formatDate={formatDate} isPreviewable={isPreviewable} isVideo={isVideo} isPdf={isPdf} openPreview={openPreview} API_BASE={API_BASE} />
             </Paper>
           </Grid>
-
           <Grid item xs={12}>
             <Box sx={{ textAlign:'center', py:3, color:'text.secondary', fontSize:12 }}>File Manager powered by Go4Pack API</Box>
           </Grid>
         </Grid>
       </Container>
-      <Dialog open={previewOpen} onClose={closePreview} maxWidth='md' fullWidth>
-        <DialogTitle sx={{ pr:5 }}>
-          {previewFile?.filename}
-          <MIconButton onClick={closePreview} size='small' sx={{ position:'absolute', right:8, top:8 }}><CloseIcon fontSize='small'/></MIconButton>
-        </DialogTitle>
-        <DialogContent dividers>
-          {isVideo(previewFile) ? (
-            <Box sx={{ aspectRatio:'16/9', width:'100%', bgcolor:'black' }}>
-              <video
-                key={previewFile?.id}
-                controls
-                autoPlay
-                style={{ width:'100%', height:'100%', objectFit:'contain' }}
-                src={`${API_BASE}/download/${encodeURIComponent(previewFile?.filename || '')}`}
-              />
-            </Box>
-          ) : isPdf(previewFile) ? (
-            <Box sx={{ width:'100%', height:'80vh' }}>
-              <iframe
-                key={previewFile?.id}
-                title={previewFile?.filename}
-                style={{ border:0, width:'100%', height:'100%' }}
-                src={`${API_BASE}/download/${encodeURIComponent(previewFile?.filename || '')}#toolbar=0`}
-              />
-            </Box>
-          ) : (
-            <Typography variant='body2' color='text.secondary'>No preview available.</Typography>
-          )}
-        </DialogContent>
-      </Dialog>
+      <PreviewDialog open={previewOpen} file={previewFile} onClose={closePreview} API_BASE={API_BASE} isVideo={isVideo} isPdf={isPdf} />
       <Snackbar open={showError} autoHideDuration={4000} onClose={()=>setShowError(false)} anchorOrigin={{ vertical:'bottom', horizontal:'right' }}>
         <Alert severity='error' onClose={()=>setShowError(false)} variant='filled' sx={{ fontSize:12 }}>
           {error}
