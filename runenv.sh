@@ -2,12 +2,13 @@
 # Run environment script: starts Next.js dev server (if present) then builds & runs Go service.
 # Usage: bash runenv.sh [-c] [-t]
 #   -c   Clear the .runtime directory before starting
-#   -t   Run 'go test ./...' first; abort if tests fail
+#   -t   Run 'go test' with coverage (outputs to .dev/coverage.out & .dev/coverage.html) then abort if tests fail
 
 set -Eeuo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RUNTIME_DIR="$ROOT_DIR/.runtime"
+DEV_DIR="$ROOT_DIR/.dev"
 VIEW_DIR="$ROOT_DIR/view"
 NEXT_PID_FILE="$RUNTIME_DIR/nextjs.pid"
 CLEAR_RUNTIME=0
@@ -30,12 +31,27 @@ if [[ $CLEAR_RUNTIME -eq 1 ]]; then
 fi
 
 mkdir -p "$RUNTIME_DIR"
+mkdir -p "$DEV_DIR"
 
 # Run tests early if requested
 if [[ $RUN_TESTS -eq 1 ]]; then
-  echo "[INFO] Running Go tests (go test ./...)" >&2
-  if (cd "$ROOT_DIR" && go test ./...); then
-    echo "[INFO] Tests passed." >&2
+  echo "[INFO] Running Go tests with coverage (go test -coverprofile)" >&2
+  COVER_PROFILE="$DEV_DIR/coverage.out"
+  if (cd "$ROOT_DIR" && go test -coverprofile="$COVER_PROFILE" ./...); then
+    if go tool cover -func="$COVER_PROFILE" >/dev/null 2>&1; then
+      TOTAL_LINE=$(go tool cover -func="$COVER_PROFILE" | tail -n1)
+      TOTAL_PCT=$(echo "$TOTAL_LINE" | awk '{print $3}')
+      echo "[INFO] Tests passed. Total coverage: $TOTAL_PCT" >&2
+      echo "[INFO] Coverage profile: $COVER_PROFILE" >&2
+      HTML_REPORT="$DEV_DIR/coverage.html"
+      if go tool cover -html="$COVER_PROFILE" -o "$HTML_REPORT" 2>/dev/null; then
+        echo "[INFO] HTML coverage report: $HTML_REPORT" >&2
+      else
+        echo "[WARN] Failed to generate HTML coverage report" >&2
+      fi
+    else
+      echo "[WARN] Could not process coverage profile $COVER_PROFILE" >&2
+    fi
   else
     echo "[ERROR] Tests failed. Aborting start." >&2
     exit 1

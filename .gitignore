@@ -33,5 +33,6 @@ go.work.sum
 
 # Runtime objects directory
 .runtime/
+.dev/
 
 config.json
