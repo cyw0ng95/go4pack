@@ -64,6 +64,7 @@ func RegisterRoutes(rg *gin.RouterGroup) {
 	rg.GET("/stats", statsHandler)
 	rg.POST("/upload/multi", uploadMultiHandler)
 	rg.POST("/upload/stream", streamUploadHandler)
+	rg.GET("/meta/:id", metaHandler)
 }
 
 func isPreviewableMIME(m string) bool {
@@ -241,9 +242,23 @@ func listHandler(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "query files failed"})
 		return
 	}
-
+	resp := make([]gin.H, 0, len(files))
+	for _, f := range files {
+		resp = append(resp, gin.H{
+			"id":               f.ID,
+			"filename":         f.Filename,
+			"size":             f.Size,
+			"compressed_size":  f.CompressedSize,
+			"compression_type": f.CompressionType,
+			"md5":              f.MD5,
+			"mime":             f.MIME,
+			"created_at":       f.CreatedAt,
+			"updated_at":       f.UpdatedAt,
+			"is_elf":           f.ElfAnalysis != nil,
+		})
+	}
 	logger.GetLogger().Info().Int("count", len(files)).Msg("files listed")
-	c.JSON(http.StatusOK, gin.H{"files": files, "count": len(files)})
+	c.JSON(http.StatusOK, gin.H{"files": resp, "count": len(files)})
 }
 
 func statsHandler(c *gin.Context) {
@@ -640,4 +655,23 @@ func streamUploadHandler(c *gin.Context) {
 		resp["elf_analysis"] = json.RawMessage(*elfJSON)
 	}
 	c.JSON(http.StatusOK, resp)
+}
+
+func metaHandler(c *gin.Context) {
+	idParam := c.Param("id")
+	if idParam == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "id required"})
+		return
+	}
+	db, err := ensureDB()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "db init failed"})
+		return
+	}
+	var fr FileRecord
+	if err := db.First(&fr, idParam).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "file not found"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"file": fr})
 }

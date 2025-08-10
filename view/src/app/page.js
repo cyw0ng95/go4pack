@@ -187,11 +187,25 @@ export default function Home() {
 
   const refreshAll = () => { fetchFiles(); fetchStats() }
 
-  const openPreview = (file) => { setPreviewFile(file); setPreviewOpen(true) }
+  const openPreview = async (file) => {
+    if (file.is_elf && !file.elf_analysis) {
+      try {
+        const r = await fetch(`${API_BASE}/meta/${file.id}`)
+        if (r.ok) {
+          const d = await r.json()
+          const full = d.file
+          file.elf_analysis = full.elf_analysis // mutate then trigger state copy
+          setFiles(fs => fs.map(x => x.id===file.id ? { ...x, elf_analysis: file.elf_analysis } : x))
+        }
+      } catch(_){}
+    }
+    setPreviewFile({ ...file })
+    setPreviewOpen(true)
+  }
   const closePreview = () => { setPreviewOpen(false); setPreviewFile(null) }
   const isVideo = (f) => !!f && typeof f.mime === 'string' && f.mime.startsWith('video/')
   const isPdf = (f) => !!f && typeof f.mime === 'string' && f.mime === 'application/pdf'
-  const isElf = (f) => !!f && !!f.elf_analysis // backend sets elf_analysis JSON string if ELF
+  const isElf = (f) => !!f && (f.is_elf || !!f.elf_analysis)
   const isPreviewable = (f) => isVideo(f) || isPdf(f) || isElf(f)
 
   return (
