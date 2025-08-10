@@ -71,14 +71,12 @@ export default function Home() {
   }, [API_BASE])
 
   const fetchPool = useCallback(async () => {
-    setPoolLoading(true)
     try {
       const r = await fetch(`${API_BASE.replace('/fileio','')}/pool/stats`)
       if (!r.ok) throw new Error('pool stats failed')
       const d = await r.json()
-      setPoolStats(d.pool)
-    } catch(e){ /* ignore for now */ }
-    finally { setPoolLoading(false) }
+      setPoolStats(prev => prev ? { ...prev, ...d.pool } : d.pool)
+    } catch(e){ /* ignore */ }
   }, [API_BASE])
 
   // Helper: decide if batch multi-upload is beneficial

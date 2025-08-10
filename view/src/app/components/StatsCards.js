@@ -1,7 +1,7 @@
 'use client'
 import { Card, CardContent, Grid, Typography, Stack, Chip, Divider } from '@mui/material'
 
-export function StatsCards({ stats, statsLoading, formatFileSize, poolStats, poolLoading }) {
+export function StatsCards({ stats, statsLoading, formatFileSize, poolStats }) {
   return (
     <Grid container spacing={3}>
       {/* Files count */}
@@ -41,11 +41,11 @@ export function StatsCards({ stats, statsLoading, formatFileSize, poolStats, poo
         <Card><CardContent>
           <Typography variant='overline'>Worker Pool</Typography>
           <Stack spacing={0.5} sx={{ mt:1, fontSize:12 }}>
-            <div>Running: {poolLoading||!poolStats? '…' : poolStats.running} / {poolLoading||!poolStats? '…' : poolStats.capacity}</div>
-            <div>Free: {poolLoading||!poolStats? '…' : poolStats.free} | Queued: {poolLoading||!poolStats? '…' : poolStats.queued_est}</div>
-            <div>Submitted: {poolLoading||!poolStats? '…' : poolStats.submitted} • Completed: {poolLoading||!poolStats? '…' : poolStats.completed}</div>
-            <div>Last Duration: {poolLoading||!poolStats? '…' : (poolStats.last_duration_ms? poolStats.last_duration_ms+' ms':'-')}</div>
-            <div>Last Finish: {poolLoading||!poolStats? '…' : (poolStats.last_finished_at? new Date(poolStats.last_finished_at).toLocaleTimeString(): '-')}</div>
+            <div>Running: {!poolStats? '…' : poolStats.running} / {!poolStats? '…' : poolStats.capacity}</div>
+            <div>Free: {!poolStats? '…' : poolStats.free} | Queued: {!poolStats? '…' : poolStats.queued_est}</div>
+            <div>Submitted: {!poolStats? '…' : poolStats.submitted} • Completed: {!poolStats? '…' : poolStats.completed}</div>
+            <div>Last Duration: {!poolStats? '…' : (poolStats.last_duration_ms? poolStats.last_duration_ms+' ms':'-')}</div>
+            <div>Last Finish: {!poolStats? '…' : (poolStats.last_finished_at? new Date(poolStats.last_finished_at).toLocaleTimeString(): '-')}</div>
             {poolStats?.last_error && <div style={{ color:'#d32f2f' }}>Last Error: {poolStats.last_error}</div>}
           </Stack>
         </CardContent></Card>
