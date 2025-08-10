@@ -35,6 +35,10 @@ export default function Home() {
   const [previewOpen, setPreviewOpen] = useState(false)
   const [poolStats, setPoolStats] = useState(null)
   const [poolLoading, setPoolLoading] = useState(false)
+  const [page,setPage] = useState(1)
+  const [pageSize,setPageSize] = useState(50)
+  const [total,setTotal] = useState(0)
+  const [pages,setPages] = useState(0)
   const API_BASE = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:8080/api/fileio'
 
   const formatFileSize = (bytes) => {
@@ -51,11 +55,11 @@ export default function Home() {
   const fetchFiles = useCallback(async () => {
     setLoading(true)
     try {
-      const r = await fetch(`${API_BASE}/list`)
+      const r = await fetch(`${API_BASE}/list?page=${page}&page_size=${pageSize}`)
       if (!r.ok) throw new Error(`list failed ${r.status}`)
-      const d = await r.json(); setFiles(d.files||[])
+      const d = await r.json(); setFiles(d.files||[]); setTotal(d.total||0); setPages(d.pages||0)
     } catch (e) { handleErr(e) } finally { setLoading(false) }
-  }, [API_BASE])
+  }, [API_BASE, page, pageSize])
 
   const fetchStats = useCallback(async () => {
     setStatsLoading(true)
@@ -224,6 +228,9 @@ export default function Home() {
   const isElf = (f) => !!f && (f.is_elf || !!f.elf_analysis)
   const isPreviewable = (f) => isVideo(f) || isPdf(f) || isElf(f)
 
+  const handlePageChange = (delta) => { setPage(p => Math.min(Math.max(1, p+delta), pages||1)) }
+  const handlePageSizeChange = (e) => { setPageSize(parseInt(e.target.value)||50); setPage(1) }
+
   return (
     <Box sx={{ flexGrow:1, bgcolor:'background.default', minHeight:'100vh' }}>
       <AppBar position='static' color='primary' elevation={1}>
@@ -260,7 +267,17 @@ export default function Home() {
             <Paper elevation={2} sx={{ p:2 }}>
               <Stack direction='row' alignItems='center' justifyContent='space-between' sx={{ mb:2 }}>
                 <Typography variant='h6'>Files</Typography>
-                <Button size='small' startIcon={<RefreshIcon/>} onClick={refreshAll} disabled={loading||statsLoading}>Refresh</Button>
+                <Stack direction='row' spacing={1} alignItems='center'>
+                  <Button size='small' startIcon={<RefreshIcon/>} onClick={refreshAll} disabled={loading||statsLoading}>Refresh</Button>
+                  <select value={pageSize} onChange={handlePageSizeChange} style={{ fontSize:12, padding:'4px 6px' }}>
+                    {[25,50,100,200].map(s=> <option key={s} value={s}>{s}/page</option>)}
+                  </select>
+                  <Stack direction='row' spacing={0.5} alignItems='center'>
+                    <Button size='small' disabled={page<=1} onClick={()=>handlePageChange(-1)}>Prev</Button>
+                    <Typography variant='caption'>{page}/{pages||1}</Typography>
+                    <Button size='small' disabled={page>=pages} onClick={()=>handlePageChange(1)}>Next</Button>
+                  </Stack>
+                </Stack>
               </Stack>
               <FilesTable files={files} loading={loading} refreshAll={refreshAll} formatFileSize={formatFileSize} formatDate={formatDate} isVideo={isVideo} isPdf={isPdf} isElf={isElf} isPreviewable={isPreviewable} openPreview={openPreview} API_BASE={API_BASE} />
             </Paper>
