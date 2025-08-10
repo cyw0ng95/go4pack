@@ -3,6 +3,7 @@ package fileio
 import (
 	"crypto/md5"
 	"encoding/hex"
+	"encoding/json"
 	"io"
 	iofs "io/fs"
 	"net/http"
@@ -18,6 +19,7 @@ import (
 
 	"go4pack/pkg/common/compress"
 	"go4pack/pkg/common/database"
+	elfutil "go4pack/pkg/common/elf"
 	"go4pack/pkg/common/file"
 	"go4pack/pkg/common/fs"
 	"go4pack/pkg/common/logger"
@@ -35,14 +37,21 @@ type FileRecord struct {
 	CreatedAt       time.Time      `json:"created_at"`
 	UpdatedAt       time.Time      `json:"updated_at"`
 	DeletedAt       gorm.DeletedAt `gorm:"index" json:"-"`
+	ElfAnalysis     *string        `json:"elf_analysis,omitempty"` // ELF analysis JSON (if applicable)
 }
 
-// ensureDB migrates and returns db
+// ensureDB migrates and returns db (always AutoMigrate to add new columns)
 func ensureDB() (*gorm.DB, error) {
 	if db := database.Get(); db != nil {
+		_ = db.AutoMigrate(&FileRecord{})
 		return db, nil
 	}
-	return database.Init("filemeta.db", &FileRecord{})
+	db, err := database.Init("filemeta.db", &FileRecord{})
+	if err != nil {
+		return nil, err
+	}
+	_ = db.AutoMigrate(&FileRecord{})
+	return db, nil
 }
 
 // RegisterRoutes registers file upload/download routes under given router group
@@ -107,6 +116,12 @@ func uploadHandler(c *gin.Context) {
 		compressionType = preCT.String()
 	}
 
+	// after storing & verifying, perform ELF analysis if applicable
+	var elfJSON *string
+	if len(data) >= 4 && data[0] == 0x7f && data[1] == 'E' && data[2] == 'L' && data[3] == 'F' {
+		elfJSON = elfutil.TryAnalyzeBytes(data)
+	}
+
 	if db, err := ensureDB(); err == nil {
 		rec := &FileRecord{
 			Filename:        header.Filename,
@@ -115,6 +130,7 @@ func uploadHandler(c *gin.Context) {
 			CompressionType: compressionType,
 			MD5:             md5sum,
 			MIME:            mimeType,
+			ElfAnalysis:     elfJSON,
 		}
 		if err := db.Create(rec).Error; err != nil {
 			logger.GetLogger().Error().Err(err).Str("filename", header.Filename).Msg("db create file record failed")
@@ -141,6 +157,9 @@ func uploadHandler(c *gin.Context) {
 		"compression_ratio": float64(compressedSize) / float64(originalSize),
 		"md5":               md5sum,
 		"mime":              mimeType,
+	}
+	if elfJSON != nil {
+		resp["elf_analysis"] = json.RawMessage(*elfJSON)
 	}
 	c.JSON(http.StatusOK, resp)
 }
@@ -407,6 +426,12 @@ func uploadMultiHandler(c *gin.Context) {
 			res.MIME = file.DetectMIME(data, fileHeader.Filename)
 			preCT := compress.IsCompressedOrMIME(data, res.MIME)
 
+			// remove invalid temp-based ELF block; perform ELF analysis directly on data
+			var elfJSON *string
+			if len(data) >= 4 && data[0] == 0x7f && data[1] == 'E' && data[2] == 'L' && data[3] == 'F' {
+				elfJSON = elfutil.TryAnalyzeBytes(data)
+			}
+
 			if err := fsys.WriteObjectHashedWithMIME(res.MD5, data, res.MIME); err != nil {
 				res.Error = "store failed"
 				return
@@ -437,6 +462,7 @@ func uploadMultiHandler(c *gin.Context) {
 					CompressionType: res.CompressionType,
 					MD5:             res.MD5,
 					MIME:            res.MIME,
+					ElfAnalysis:     elfJSON,
 				}
 				_ = db.Create(rec).Error // ignore individual errors here
 			}
@@ -570,6 +596,25 @@ func streamUploadHandler(c *gin.Context) {
 		compressionType = fsys.GetCompressor().Type().String()
 	}
 
+	// collect original bytes for ELF analysis
+	var elfJSON *string
+	if fi, _ := temp.Stat(); fi != nil && fi.Size() >= 4 {
+		if _, err := temp.Seek(0, 0); err == nil {
+			magic := make([]byte, 4)
+			n, _ := temp.Read(magic)
+			if n == 4 && magic[0] == 0x7f && magic[1] == 'E' && magic[2] == 'L' && magic[3] == 'F' {
+				if _, err := temp.Seek(0, 0); err == nil {
+					dataAll, rErr := io.ReadAll(temp)
+					if rErr == nil {
+						elfJSON = elfutil.TryAnalyzeBytes(dataAll)
+					}
+					_, _ = temp.Seek(0, 0)
+				}
+			}
+			_, _ = temp.Seek(0, 0)
+		}
+	}
+
 	if db, err := ensureDB(); err == nil {
 		rec := &FileRecord{
 			Filename:        header.Filename,
@@ -578,16 +623,21 @@ func streamUploadHandler(c *gin.Context) {
 			CompressionType: compressionType,
 			MD5:             md5sum,
 			MIME:            mimeType,
+			ElfAnalysis:     elfJSON,
 		}
 		_ = db.Create(rec).Error
 	}
 
-	c.JSON(http.StatusOK, gin.H{
+	resp := gin.H{
 		"filename":         header.Filename,
 		"original_size":    written,
 		"compressed_size":  compressedSize,
 		"compression_type": compressionType,
 		"md5":              md5sum,
 		"mime":             mimeType,
-	})
+	}
+	if elfJSON != nil {
+		resp["elf_analysis"] = json.RawMessage(*elfJSON)
+	}
+	c.JSON(http.StatusOK, resp)
 }

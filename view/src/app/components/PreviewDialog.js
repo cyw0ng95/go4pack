@@ -1,8 +1,8 @@
 'use client'
-import { Dialog, DialogTitle, DialogContent, Box, Typography, IconButton as MIconButton } from '@mui/material'
+import { Dialog, DialogTitle, DialogContent, Box, Typography, IconButton as MIconButton, Alert, Divider } from '@mui/material'
 import CloseIcon from '@mui/icons-material/Close'
 
-export function PreviewDialog({ open, file, onClose, API_BASE, isVideo, isPdf }) {
+export function PreviewDialog({ open, file, onClose, API_BASE, isVideo, isPdf, isElf }) {
   return (
     <Dialog open={open} onClose={onClose} maxWidth='md' fullWidth>
       <DialogTitle sx={{ pr:5 }}>
@@ -29,6 +29,11 @@ export function PreviewDialog({ open, file, onClose, API_BASE, isVideo, isPdf })
               src={`${API_BASE}/download/${encodeURIComponent(file?.filename || '')}#toolbar=0`}
             />
           </Box>
+        ) : isElf(file) ? (
+          <Box sx={{ width:'100%', maxHeight:'70vh', overflow:'auto', fontFamily:'monospace', fontSize:12 }}>
+            <Alert severity='info' sx={{ mb:1 }}>ELF Metadata</Alert>
+            {file?.elf_analysis ? renderElf(JSON.parse(file.elf_analysis)) : 'No ELF data'}
+          </Box>
         ) : (
           <Typography variant='body2' color='text.secondary'>No preview available.</Typography>
         )}
@@ -36,3 +41,15 @@ export function PreviewDialog({ open, file, onClose, API_BASE, isVideo, isPdf })
     </Dialog>
   )
 }
+
+function renderElf(obj) {
+  const entries = Object.entries(obj)
+  return (
+    <Box component='pre' sx={{ m:0 }}>
+      {entries.map(([k,v]) => (
+        <div key={k}><strong>{k}:</strong> {formatVal(v)}</div>
+      ))}
+    </Box>
+  )
+}
+function formatVal(v){ if(Array.isArray(v)) return v.join(', '); if(typeof v==='object') return JSON.stringify(v); return String(v) }

@@ -11,6 +11,7 @@ import DownloadIcon from '@mui/icons-material/Download'
 import PlayArrowIcon from '@mui/icons-material/PlayArrow'
 import CloseIcon from '@mui/icons-material/Close'
 import PictureAsPdfIcon from '@mui/icons-material/PictureAsPdf'
+import CodeIcon from '@mui/icons-material/Code'
 // New component imports
 import { UploadSessionCard } from './components/UploadSessionCard'
 import { StatsCards } from './components/StatsCards'
@@ -190,7 +191,8 @@ export default function Home() {
   const closePreview = () => { setPreviewOpen(false); setPreviewFile(null) }
   const isVideo = (f) => !!f && typeof f.mime === 'string' && f.mime.startsWith('video/')
   const isPdf = (f) => !!f && typeof f.mime === 'string' && f.mime === 'application/pdf'
-  const isPreviewable = (f) => isVideo(f) || isPdf(f)
+  const isElf = (f) => !!f && !!f.elf_analysis // backend sets elf_analysis JSON string if ELF
+  const isPreviewable = (f) => isVideo(f) || isPdf(f) || isElf(f)
 
   return (
     <Box sx={{ flexGrow:1, bgcolor:'background.default', minHeight:'100vh' }}>
@@ -230,7 +232,7 @@ export default function Home() {
                 <Typography variant='h6'>Files</Typography>
                 <Button size='small' startIcon={<RefreshIcon/>} onClick={refreshAll} disabled={loading||statsLoading}>Refresh</Button>
               </Stack>
-              <FilesTable files={files} loading={loading} refreshAll={refreshAll} formatFileSize={formatFileSize} formatDate={formatDate} isPreviewable={isPreviewable} isVideo={isVideo} isPdf={isPdf} openPreview={openPreview} API_BASE={API_BASE} />
+              <FilesTable files={files} loading={loading} refreshAll={refreshAll} formatFileSize={formatFileSize} formatDate={formatDate} isVideo={isVideo} isPdf={isPdf} isElf={isElf} isPreviewable={isPreviewable} openPreview={openPreview} API_BASE={API_BASE} />
             </Paper>
           </Grid>
           <Grid item xs={12}>
@@ -238,7 +240,7 @@ export default function Home() {
           </Grid>
         </Grid>
       </Container>
-      <PreviewDialog open={previewOpen} file={previewFile} onClose={closePreview} API_BASE={API_BASE} isVideo={isVideo} isPdf={isPdf} />
+      <PreviewDialog open={previewOpen} file={previewFile} onClose={closePreview} API_BASE={API_BASE} isVideo={isVideo} isPdf={isPdf} isElf={isElf} />
       <Snackbar open={showError} autoHideDuration={4000} onClose={()=>setShowError(false)} anchorOrigin={{ vertical:'bottom', horizontal:'right' }}>
         <Alert severity='error' onClose={()=>setShowError(false)} variant='filled' sx={{ fontSize:12 }}>
           {error}

@@ -4,8 +4,9 @@ import RefreshIcon from '@mui/icons-material/Refresh'
 import DownloadIcon from '@mui/icons-material/Download'
 import PlayArrowIcon from '@mui/icons-material/PlayArrow'
 import PictureAsPdfIcon from '@mui/icons-material/PictureAsPdf'
+import CodeIcon from '@mui/icons-material/Code'
 
-export function FilesTable({ files, loading, refreshAll, formatFileSize, formatDate, isPreviewable, isVideo, isPdf, openPreview, API_BASE }) {
+export function FilesTable({ files, loading, refreshAll, formatFileSize, formatDate, isPreviewable, isVideo, isPdf, isElf, openPreview, API_BASE }) {
   if (loading) return <Box sx={{ textAlign:'center', py:6 }}><RefreshIcon className='spin' /></Box>
   if (!files.length) return <Box sx={{ textAlign:'center', py:6, color:'text.secondary' }}>No files uploaded</Box>
   return (
@@ -13,7 +14,7 @@ export function FilesTable({ files, loading, refreshAll, formatFileSize, formatD
       <TableHead>
         <TableRow>
           <TableCell>Filename</TableCell>
-          <TableCell>Type</TableCell>{/* New MIME type column */}
+          <TableCell>Type</TableCell>
           <TableCell>Size</TableCell>
           <TableCell>Uploaded</TableCell>
           <TableCell align='right'>Actions</TableCell>
@@ -23,7 +24,7 @@ export function FilesTable({ files, loading, refreshAll, formatFileSize, formatD
         {files.map(f => (
           <TableRow key={f.id} hover>
             <TableCell sx={{ cursor: isPreviewable(f)?'pointer':'default', color: isPreviewable(f)?'primary.main':'inherit' }} onClick={()=> isPreviewable(f)&&openPreview(f)}>{f.filename}</TableCell>
-            <TableCell>{f.mime || '-'}</TableCell>
+            <TableCell>{f.mime || (isElf(f)?'application/x-elf':'-')}</TableCell>
             <TableCell>{formatFileSize(f.size)}</TableCell>
             <TableCell>{formatDate(f.created_at)}</TableCell>
             <TableCell align='right'>
@@ -35,6 +36,11 @@ export function FilesTable({ files, loading, refreshAll, formatFileSize, formatD
               {isPdf(f) && (
                 <IconButton size='small' color='secondary' onClick={()=>openPreview(f)} sx={{ mr:0.5 }}>
                   <PictureAsPdfIcon fontSize='inherit'/>
+                </IconButton>
+              )}
+              {isElf(f) && (
+                <IconButton size='small' color='secondary' onClick={()=>openPreview(f)} sx={{ mr:0.5 }}>
+                  <CodeIcon fontSize='inherit'/>
                 </IconButton>
               )}
               <IconButton size='small' color='primary' onClick={()=> window.open(`${API_BASE}/download/${encodeURIComponent(f.filename)}`,'_blank')}>
