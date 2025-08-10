@@ -365,3 +365,16 @@ func (fsys *FileSystem) CommitTempAsHashed(tempFilePath, hash string) (string, b
 	}
 	return p, true, nil
 }
+
+// VerifyHashedRegular ensures the hashed object is a regular file (not symlink or special)
+func (fsys *FileSystem) VerifyHashedRegular(hash string) error {
+	p := fsys.hashedPath(hash)
+	info, err := os.Lstat(p)
+	if err != nil {
+		return fmt.Errorf("lstat object: %w", err)
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("object not regular")
+	}
+	return nil
+}
