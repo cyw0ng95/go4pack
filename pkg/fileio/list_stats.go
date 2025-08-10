@@ -51,7 +51,29 @@ func listHandler(c *gin.Context) {
 		if f.AnalysisStatus == "done" {
 			isELF = true
 		}
-		resp = append(resp, gin.H{"id": f.ID, "filename": f.Filename, "size": f.Size, "compressed_size": f.CompressedSize, "compression_type": f.CompressionType, "md5": f.MD5, "mime": f.MIME, "created_at": f.CreatedAt, "updated_at": f.UpdatedAt, "is_elf": isELF, "analysis_status": f.AnalysisStatus})
+		isGzip := (f.MIME == "application/gzip" || f.MIME == "application/x-gzip")
+		avail := []string{}
+		if isELF {
+			avail = append(avail, "elf")
+		}
+		if isGzip {
+			avail = append(avail, "gzip")
+		}
+		resp = append(resp, gin.H{
+			"id":                 f.ID,
+			"filename":           f.Filename,
+			"size":               f.Size,
+			"compressed_size":    f.CompressedSize,
+			"compression_type":   f.CompressionType,
+			"md5":                f.MD5,
+			"mime":               f.MIME,
+			"created_at":         f.CreatedAt,
+			"updated_at":         f.UpdatedAt,
+			"is_elf":             isELF,
+			"is_gzip":            isGzip,
+			"analysis_status":    f.AnalysisStatus,
+			"available_analysis": avail, // NEW
+		})
 	}
 	pages := (total + int64(pageSize) - 1) / int64(pageSize)
 	logger.GetLogger().Info().Int("count", len(files)).Int64("total", total).Int("page", page).Int("page_size", pageSize).Msg("files listed paginated")
@@ -147,45 +169,113 @@ func metaHandler(c *gin.Context) {
 		return
 	}
 
-	var cache ElfAnalyzeCached
-	cacheFound := false
-	if err := db.Where("file_id = ?", fr.ID).First(&cache).Error; err == nil {
-		cacheFound = true
+	reqType := c.Query("type") // "", "elf", "gzip"
+	if reqType != "" && reqType != "elf" && reqType != "gzip" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid type (expected elf|gzip)"})
+		return
 	}
 
-	// If not cached, attempt on-demand computation (idempotent) when status not error
-	if !cacheFound && fr.AnalysisStatus != "error" {
-		// Read file content via hashed storage
+	isGzip := fr.MIME == "application/gzip" || fr.MIME == "application/x-gzip"
+	// We consider ELF if status not none (pending/done/error) or magic can be confirmed on demand
+	isELFStatus := fr.AnalysisStatus == "pending" || fr.AnalysisStatus == "done" || fr.AnalysisStatus == "error"
+
+	// Decide target analysis type
+	var target string
+	if reqType != "" {
+		target = reqType
+	} else {
+		if isGzip {
+			target = "gzip"
+		} else if isELFStatus {
+			target = "elf"
+		}
+	}
+
+	// Validate compatibility if user requested a type mismatching file characteristics
+	if reqType == "gzip" && !isGzip {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "file is not gzip"})
+		return
+	}
+	if reqType == "elf" && !isELFStatus {
+		// we can still probe magic to upgrade
 		if fsys, ferr := fs.New(); ferr == nil {
-			if data, rerr := fsys.ReadObjectHashed(fr.MD5); rerr == nil {
-				if len(data) >= 4 && data[0] == 0x7f && data[1] == 'E' && data[2] == 'L' && data[3] == 'F' {
-					if analysisMap, aerr := elfutil.AnalyzeBytes(data); aerr == nil {
-						if b, mErr := json.Marshal(analysisMap); mErr == nil {
-							js := string(b)
-							cache = ElfAnalyzeCached{FileID: fr.ID, Data: js}
-							_ = db.Create(&cache).Error
-							// Update status if not already done
-							if fr.AnalysisStatus != "done" {
-								_ = db.Model(&FileRecord{}).Where("id = ?", fr.ID).Update("analysis_status", "done").Error
-								fr.AnalysisStatus = "done"
-							}
-							cacheFound = true
-						}
-					} else {
-						// mark error
-						msg := aerr.Error()
-						_ = db.Model(&FileRecord{}).Where("id = ?", fr.ID).Updates(map[string]any{"analysis_status": "error", "analysis_error": msg})
-						fr.AnalysisStatus = "error"
-					}
-				}
+			if data, rerr := fsys.ReadObjectHashed(fr.MD5); rerr == nil && len(data) >= 4 &&
+				data[0] == 0x7f && data[1] == 'E' && data[2] == 'L' && data[3] == 'F' {
+				isELFStatus = true
 			}
+		}
+		if !isELFStatus {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "file is not ELF"})
+			return
 		}
 	}
 
 	resp := gin.H{"file": fr}
-	if cacheFound {
-		resp["elf_analysis"] = json.RawMessage(cache.Data)
+
+	// NEW: advertise available analyses
+	avail := []string{}
+	if fr.AnalysisStatus == "pending" || fr.AnalysisStatus == "done" || fr.AnalysisStatus == "error" {
+		avail = append(avail, "elf")
 	}
+	if fr.MIME == "application/gzip" || fr.MIME == "application/x-gzip" {
+		avail = append(avail, "gzip")
+	}
+	resp["available_analysis"] = avail
+
+	switch target {
+	case "elf":
+		var cache ElfAnalyzeCached
+		cacheFound := false
+		if err := db.Where("file_id = ?", fr.ID).First(&cache).Error; err == nil {
+			cacheFound = true
+		} else {
+			// On-demand compute if not error status
+			if fr.AnalysisStatus != "error" {
+				if fsys, ferr := fs.New(); ferr == nil {
+					if data, rerr := fsys.ReadObjectHashed(fr.MD5); rerr == nil && len(data) >= 4 &&
+						data[0] == 0x7f && data[1] == 'E' && data[2] == 'L' && data[3] == 'F' {
+						if analysisMap, aerr := elfutil.AnalyzeBytes(data); aerr == nil {
+							if b, mErr := json.Marshal(analysisMap); mErr == nil {
+								cache = ElfAnalyzeCached{FileID: fr.ID, Data: string(b)}
+								_ = db.Create(&cache).Error
+								if fr.AnalysisStatus != "done" {
+									_ = db.Model(&FileRecord{}).Where("id = ?", fr.ID).Update("analysis_status", "done").Error
+									fr.AnalysisStatus = "done"
+								}
+								cacheFound = true
+							}
+						} else {
+							msg := aerr.Error()
+							_ = db.Model(&FileRecord{}).Where("id = ?", fr.ID).
+								Updates(map[string]any{"analysis_status": "error", "analysis_error": msg})
+							fr.AnalysisStatus = "error"
+						}
+					}
+				}
+			}
+		}
+		resp["analysis_type"] = "elf"
+		if cacheFound {
+			resp["analysis"] = json.RawMessage(cache.Data)
+		} else {
+			resp["analysis"] = nil
+		}
+	case "gzip":
+		var gcache GzipAnalyzeCached
+		if err := db.Where("file_id = ?", fr.ID).First(&gcache).Error; err == nil {
+			resp["analysis_type"] = "gzip"
+			resp["analysis"] = json.RawMessage(gcache.Data)
+		} else {
+			resp["analysis_type"] = "gzip"
+			resp["analysis"] = nil
+		}
+	default:
+		// No analysis requested/detected
+		resp["analysis_type"] = nil
+		resp["analysis"] = nil
+	}
+
+	resp["analysis_status"] = fr.AnalysisStatus
 	c.JSON(http.StatusOK, resp)
 }
 

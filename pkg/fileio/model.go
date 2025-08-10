@@ -33,16 +33,25 @@ type ElfAnalyzeCached struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
+// GzipAnalyzeCached stores cached gzip (and optional tar) analysis JSON
+type GzipAnalyzeCached struct {
+	ID        uint      `gorm:"primaryKey" json:"id"`
+	FileID    uint      `gorm:"uniqueIndex" json:"file_id"`
+	Data      string    `gorm:"type:text" json:"data"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
 // ensureDB migrates and returns db (always AutoMigrate to add new columns)
 func ensureDB() (*gorm.DB, error) {
 	if db := database.Get(); db != nil {
-		_ = db.AutoMigrate(&FileRecord{}, &ElfAnalyzeCached{})
+		_ = db.AutoMigrate(&FileRecord{}, &ElfAnalyzeCached{}, &GzipAnalyzeCached{})
 		return db, nil
 	}
-	db, err := database.Init("filemeta.db", &FileRecord{}, &ElfAnalyzeCached{})
+	db, err := database.Init("filemeta.db", &FileRecord{}, &ElfAnalyzeCached{}, &GzipAnalyzeCached{})
 	if err != nil {
 		return nil, err
 	}
-	_ = db.AutoMigrate(&FileRecord{}, &ElfAnalyzeCached{})
+	_ = db.AutoMigrate(&FileRecord{}, &ElfAnalyzeCached{}, &GzipAnalyzeCached{})
 	return db, nil
 }

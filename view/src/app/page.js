@@ -190,20 +190,27 @@ export default function Home() {
 
   const refreshAll = () => { fetchFiles(); fetchStats() }
 
+  // NEW: generic analysis fetcher using meta ?type=
+  const fetchAnalysis = async (fileObj, type, prop) => {
+    try {
+      const r = await fetch(`${API_BASE}/meta/${fileObj.id}?type=${type}`)
+      if (!r.ok) return
+      const d = await r.json()
+      if (d.analysis) {
+        fileObj[prop] = d.analysis
+        setFiles(fs => fs.map(x => x.id === fileObj.id ? { ...x, [prop]: d.analysis } : x))
+      }
+    } catch (_) { /* ignore */ }
+  }
+
   const openPreview = async (file) => {
-    if (file.is_elf && !file.elf_analysis) {
-      try {
-        const r = await fetch(`${API_BASE}/meta/${file.id}`)
-        if (r.ok) {
-          const d = await r.json()
-          // backend now returns top-level elf_analysis separate from file
-          const analysis = d.elf_analysis || d.file?.elf_analysis
-          if (analysis) {
-            file.elf_analysis = analysis
-            setFiles(fs => fs.map(x => x.id===file.id ? { ...x, elf_analysis: analysis } : x))
-          }
-        }
-      } catch(_){ /* ignore */ }
+    // ELF analysis via new meta interface
+    if ((file.is_elf || (file.available_analysis||[]).includes('elf')) && !file.elf_analysis) {
+      await fetchAnalysis(file, 'elf', 'elf_analysis')
+    }
+    // GZIP analysis via new meta interface
+    if ((isGzip(file) || (file.available_analysis||[]).includes('gzip')) && !file.gzip_analysis) {
+      await fetchAnalysis(file, 'gzip', 'gzip_analysis')
     }
     setPreviewFile({ ...file })
     setPreviewOpen(true)
@@ -213,7 +220,8 @@ export default function Home() {
   const isPdf = (f) => !!f && typeof f.mime === 'string' && f.mime === 'application/pdf'
   const isElf = (f) => !!f && (f.is_elf || !!f.elf_analysis)
   const isText = (f) => !!f && typeof f.mime === 'string' && f.mime.startsWith('text/plain')
-  const isPreviewable = (f) => isVideo(f) || isPdf(f) || isElf(f) || isText(f)
+  const isGzip = (f) => !!f && typeof f.mime === 'string' && ['application/gzip','application/x-gzip'].includes(f.mime)
+  const isPreviewable = (f) => isVideo(f) || isPdf(f) || isElf(f) || isText(f) || isGzip(f)
 
   const handlePageChange = (delta) => { setPage(p => Math.min(Math.max(1, p+delta), pages||1)) }
   const handlePageSizeChange = (e) => { setPageSize(parseInt(e.target.value)||50); setPage(1) }
