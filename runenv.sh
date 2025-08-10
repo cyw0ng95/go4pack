@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Run environment script: starts Next.js dev server (if present) then builds & runs Go service.
-# Usage: bash runenv.sh [-c]
+# Usage: bash runenv.sh [-c] [-t]
 #   -c   Clear the .runtime directory before starting
+#   -t   Run 'go test ./...' first; abort if tests fail
 
 set -Eeuo pipefail
 
@@ -10,11 +11,13 @@ RUNTIME_DIR="$ROOT_DIR/.runtime"
 VIEW_DIR="$ROOT_DIR/view"
 NEXT_PID_FILE="$RUNTIME_DIR/nextjs.pid"
 CLEAR_RUNTIME=0
+RUN_TESTS=0
 
 # Parse flags
-while getopts ":c" opt; do
+while getopts ":ct" opt; do
   case "$opt" in
     c) CLEAR_RUNTIME=1 ;;
+    t) RUN_TESTS=1 ;;
     *) ;;
   esac
 done
@@ -27,6 +30,17 @@ if [[ $CLEAR_RUNTIME -eq 1 ]]; then
 fi
 
 mkdir -p "$RUNTIME_DIR"
+
+# Run tests early if requested
+if [[ $RUN_TESTS -eq 1 ]]; then
+  echo "[INFO] Running Go tests (go test ./...)" >&2
+  if (cd "$ROOT_DIR" && go test ./...); then
+    echo "[INFO] Tests passed." >&2
+  else
+    echo "[ERROR] Tests failed. Aborting start." >&2
+    exit 1
+  fi
+fi
 
 cleanup() {
   echo "[INFO] Caught exit signal. Cleaning up..." >&2
