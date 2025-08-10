@@ -1,9 +1,10 @@
 'use client'
 import { Card, CardContent, Grid, Typography, Stack, Chip, Divider } from '@mui/material'
 
-export function StatsCards({ stats, statsLoading, formatFileSize }) {
+export function StatsCards({ stats, statsLoading, formatFileSize, poolStats }) {
   return (
     <Grid container spacing={3}>
+      {/* Files count */}
       <Grid item xs={12} md={3}>
         <Card><CardContent>
           <Typography variant='overline'>Files</Typography>
@@ -11,6 +12,7 @@ export function StatsCards({ stats, statsLoading, formatFileSize }) {
             <Typography variant='caption' color='text.secondary'>Unique {statsLoading? '…' : stats?.unique_hash_count ?? 0}</Typography>
         </CardContent></Card>
       </Grid>
+      {/* Original vs Compressed */}
       <Grid item xs={12} md={3}>
         <Card><CardContent>
           <Typography variant='overline'>Original vs Compressed</Typography>
@@ -18,6 +20,7 @@ export function StatsCards({ stats, statsLoading, formatFileSize }) {
           <Typography variant='caption' color='text.secondary'>Saved {statsLoading||!stats? '…' : formatFileSize(stats.space_saved)}</Typography>
         </CardContent></Card>
       </Grid>
+      {/* Physical Usage */}
       <Grid item xs={12} md={3}>
         <Card><CardContent>
           <Typography variant='overline'>Physical Usage</Typography>
@@ -25,6 +28,7 @@ export function StatsCards({ stats, statsLoading, formatFileSize }) {
           <Typography variant='caption' color='text.secondary'>Blobs {statsLoading||!stats? '…' : stats.physical_objects_count}</Typography>
         </CardContent></Card>
       </Grid>
+      {/* Compression Ratio */}
       <Grid item xs={12} md={3}>
         <Card><CardContent>
           <Typography variant='overline'>Compression Ratio</Typography>
@@ -32,8 +36,23 @@ export function StatsCards({ stats, statsLoading, formatFileSize }) {
           <Typography variant='caption' color='text.secondary'>Saved % {statsLoading||!stats? '…' : (stats.space_saved_percentage? stats.space_saved_percentage.toFixed(2)+'%':'0%')}</Typography>
         </CardContent></Card>
       </Grid>
+      {/* Pool Stats */}
+      <Grid item xs={12} md={4}>
+        <Card><CardContent>
+          <Typography variant='overline'>Worker Pool</Typography>
+          <Stack spacing={0.5} sx={{ mt:1, fontSize:12 }}>
+            <div>Running: {!poolStats? '…' : poolStats.running} / {!poolStats? '…' : poolStats.capacity}</div>
+            <div>Free: {!poolStats? '…' : poolStats.free} | Queued: {!poolStats? '…' : poolStats.queued_est}</div>
+            <div>Submitted: {!poolStats? '…' : poolStats.submitted} • Completed: {!poolStats? '…' : poolStats.completed}</div>
+            <div>Last Duration: {!poolStats? '…' : (poolStats.last_duration_ms? poolStats.last_duration_ms+' ms':'-')}</div>
+            <div>Last Finish: {!poolStats? '…' : (poolStats.last_finished_at? new Date(poolStats.last_finished_at).toLocaleTimeString(): '-')}</div>
+            {poolStats?.last_error && <div style={{ color:'#d32f2f' }}>Last Error: {poolStats.last_error}</div>}
+          </Stack>
+        </CardContent></Card>
+      </Grid>
+      {/* Dedup savings */}
       {stats && (
-        <Grid item xs={12} md={6}>
+        <Grid item xs={12} md={4}>
           <Card>
             <CardContent>
               <Typography variant='subtitle2' gutterBottom>Dedup Savings</Typography>
@@ -47,8 +66,9 @@ export function StatsCards({ stats, statsLoading, formatFileSize }) {
           </Card>
         </Grid>
       )}
+      {/* Compression & MIME */}
       {stats && (
-        <Grid item xs={12} md={6}>
+        <Grid item xs={12} md={4}>
           <Card>
             <CardContent>
               <Typography variant='subtitle2' gutterBottom>Compression & MIME Types</Typography>

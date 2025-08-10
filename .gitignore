@@ -18,7 +18,8 @@ coverage.*
 profile.cov
 
 # Dependency directories (remove the comment below to include it)
-# vendor/
+vendor/
+.pnpm-store/
 
 # Go workspace file
 go.work
@@ -33,5 +34,6 @@ go.work.sum
 
 # Runtime objects directory
 .runtime/
+.dev/
 
 config.json

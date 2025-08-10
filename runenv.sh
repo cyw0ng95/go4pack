@@ -1,79 +1,119 @@
 #!/usr/bin/env bash
-# Run environment script: starts Next.js dev server (if present) then builds & runs Go service.
-# Usage: bash runenv.sh [-c]
-#   -c   Clear the .runtime directory before starting
+# Simple dev runner: build image then start (or replace) a single interactive dev container.
 
 set -Eeuo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-RUNTIME_DIR="$ROOT_DIR/.runtime"
-VIEW_DIR="$ROOT_DIR/view"
-NEXT_PID_FILE="$RUNTIME_DIR/nextjs.pid"
-CLEAR_RUNTIME=0
-
-# Parse flags
-while getopts ":c" opt; do
-  case "$opt" in
-    c) CLEAR_RUNTIME=1 ;;
-    *) ;;
-  esac
-done
-shift $((OPTIND-1))
-
-# Clear runtime if requested
-if [[ $CLEAR_RUNTIME -eq 1 ]]; then
-  echo "[INFO] Clearing $RUNTIME_DIR" >&2
-  rm -rf "$RUNTIME_DIR" || true
+# Abort if environment variable indicates container context
+if [[ -n "${GO4PACK_ENV_TYPE:-}" ]]; then
+  echo "[ERROR] Detected GO4PACK_ENV_TYPE=$GO4PACK_ENV_TYPE; runenv.sh must be executed on the host (outside container)." >&2
+  exit 1
 fi
 
-mkdir -p "$RUNTIME_DIR"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+IMAGE_TAG="go4pack:dev"
+DEV_CONTAINER_NAME="go4pack_dev"
+ENGINE=""
+VOL_SPEC=""
 
-cleanup() {
-  echo "[INFO] Caught exit signal. Cleaning up..." >&2
-  if [[ -f "$NEXT_PID_FILE" ]]; then
-    NEXT_PID="$(cat "$NEXT_PID_FILE" || true)"
-    if [[ -n "${NEXT_PID}" ]] && ps -p "$NEXT_PID" > /dev/null 2>&1; then
-      echo "[INFO] Stopping Next.js dev server (PID $NEXT_PID)" >&2
-      kill "$NEXT_PID" 2>/dev/null || true
-      wait "$NEXT_PID" 2>/dev/null || true
-    fi
-    rm -f "$NEXT_PID_FILE"
-  fi
-  echo "[INFO] Cleanup complete." >&2
-}
-trap cleanup INT TERM EXIT
-
-start_next() {
-  if [[ -d "$VIEW_DIR" && -f "$VIEW_DIR/package.json" ]]; then
-    echo "[INFO] Starting Next.js dev server from $VIEW_DIR" >&2
-    (
-      cd "$VIEW_DIR"
-      if [[ ! -d node_modules ]]; then
-        echo "[INFO] Installing view dependencies (npm install)" >&2
-        npm install
-      fi
-      # Prefer pnpm / yarn if lockfiles present
-      if [[ -f pnpm-lock.yaml ]]; then
-        (command -v pnpm >/dev/null 2>&1) || npm install -g pnpm
-        pnpm dev &
-      elif [[ -f yarn.lock ]]; then
-        (command -v yarn >/dev/null 2>&1) || npm install -g yarn
-        yarn dev &
-      else
-        npm run dev &
-      fi
-      echo $! > "$NEXT_PID_FILE"
-    )
-    echo "[INFO] Next.js dev server PID $(cat "$NEXT_PID_FILE")" >&2
+detect_engine() {
+  if command -v podman >/dev/null 2>&1; then
+    ENGINE=podman
+  elif command -v docker >/dev/null 2>&1; then
+    ENGINE=docker
   else
-    echo "[INFO] No Next.js project detected (missing view/ or package.json). Skipping front-end." >&2
+    echo "[ERROR] podman or docker required" >&2
+    exit 1
+  fi
+  # Volume spec (add :z only if podman + selinux)
+  if [[ "$ENGINE" == "podman" ]] && command -v selinuxenabled >/dev/null 2>&1 && selinuxenabled; then
+    VOL_SPEC="$ROOT_DIR:/opt:Z"
+  else
+    VOL_SPEC="$ROOT_DIR:/opt"
   fi
 }
 
-run_go() {
-  echo "[INFO] Running Go service with 'go run .' (Ctrl+C to stop)" >&2
-  (cd "$ROOT_DIR" && go run .)
+port_in_use() {  # NEW: generic port usage check
+  local port="$1"
+  if command -v lsof >/dev/null 2>&1; then
+    lsof -iTCP:"$port" -sTCP:LISTEN -t 2>/dev/null | grep -q .
+  elif command -v ss >/dev/null 2>&1; then
+    ss -ltnp 2>/dev/null | awk -v p=":$port$" '$4 ~ p {f=1} END{exit f?0:1}'
+  else
+    return 1
+  fi
 }
 
-start_next
-run_go
+kill_port() {
+  local port="$1" pids=""
+  if command -v lsof >/dev/null 2>&1; then
+    pids=$(lsof -iTCP:"$port" -sTCP:LISTEN -t 2>/dev/null || true)
+  elif command -v ss >/dev/null 2>&1; then
+    pids=$(ss -ltnp 2>/dev/null | awk -v p=":$port\$" '$4 ~ p {for(i=1;i<=NF;i++) if($i ~ /pid=/){match($i,/pid=([0-9]+)/,a); if(a[1]) print a[1]}}' | sort -u)
+  fi
+  [[ -z "$pids" ]] && return 0
+  echo "[INFO] Freeing port $port (PIDs: $pids)" >&2
+  for pid in $pids; do
+    kill "$pid" 2>/dev/null || sudo kill "$pid" 2>/dev/null || true
+  done
+  sleep 0.5
+  # Re-check
+  if port_in_use "$port"; then
+    echo "[ERROR] Port $port still busy" >&2
+    return 1
+  fi
+  return 0
+}
+
+ensure_or_skip_port() {  # NEW: attempt free port; abort optional
+  local port="$1" mandatory="$2"
+  if ! port_in_use "$port"; then return 0; fi
+  echo "[INFO] Port $port busy; attempting to free..." >&2
+  if kill_port "$port"; then
+    echo "[INFO] Port $port freed." >&2
+    return 0
+  fi
+  if [[ "$mandatory" == "true" ]]; then
+    echo "[ERROR] Mandatory port $port unavailable." >&2
+    exit 1
+  else
+    echo "[WARN] Optional port $port still busy; will skip binding." >&2
+    return 1
+  fi
+}
+
+build_image() {
+  echo "[1/2] Building image $IMAGE_TAG" >&2
+  $ENGINE build -f "$ROOT_DIR/Containerfile" -t "$IMAGE_TAG" "$ROOT_DIR"
+}
+
+run_container() {
+  echo "[2/2] Starting interactive dev container $DEV_CONTAINER_NAME" >&2
+  ensure_or_skip_port 8080 true
+  ensure_or_skip_port 3000 true
+
+  # Remove existing (docker) or use --replace (podman)
+  if $ENGINE ps -a --format '{{.Names}}' | grep -Fxq "$DEV_CONTAINER_NAME"; then
+    if [[ "$ENGINE" == "docker" ]]; then
+      echo "[INFO] Removing existing container $DEV_CONTAINER_NAME" >&2
+      $ENGINE rm -f "$DEV_CONTAINER_NAME" >/dev/null 2>&1 || true
+    fi
+  fi
+  local replace_flag=""
+  [[ "$ENGINE" == "podman" ]] && replace_flag="--replace"
+  echo "[INFO] Launching shell (exit to stop container)" >&2
+  exec $ENGINE run -it \
+    -p 8080:8080 \
+    -p 13000:3000 \
+    -v "$VOL_SPEC" \
+    $replace_flag \
+    --name "$DEV_CONTAINER_NAME" \
+    "$IMAGE_TAG" /bin/bash
+}
+
+main() {
+  detect_engine
+  build_image
+  run_container
+}
+
+main "$@"

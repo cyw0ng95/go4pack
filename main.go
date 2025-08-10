@@ -4,7 +4,9 @@ import (
 	"context"
 	"go4pack/pkg/common"
 	"go4pack/pkg/common/restful"
+	"go4pack/pkg/common/worker"
 	"go4pack/pkg/fileio"
+	"go4pack/pkg/poolapi"
 	"os"
 	"os/signal"
 	"syscall"
@@ -38,12 +40,19 @@ func main() {
 	}
 	logger.Info().Str("runtime_path", fsys.GetRuntimePath()).Str("objects_path", fsys.GetObjectsPath()).Msg("Runtime paths ready")
 
+	// Initialize worker pool (configurable later)
+	if err := worker.Init(8); err != nil {
+		logger.Error().Err(err).Msg("Worker pool init failed")
+	}
+
 	// Start REST server
 	srv := restful.NewServer(restful.WithAddress(":8080"))
 
 	api := srv.Engine.Group("/api")
 	fileGroup := api.Group("/fileio")
 	fileio.RegisterRoutes(fileGroup)
+	poolGroup := api.Group("/pool")
+	poolapi.RegisterRoutes(poolGroup)
 
 	if err := srv.Start(); err != nil {
 		logger.Fatal().Err(err).Msg("Failed to start server")
