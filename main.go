@@ -6,6 +6,7 @@ import (
 	"go4pack/pkg/common/restful"
 	"go4pack/pkg/common/worker"
 	"go4pack/pkg/fileio"
+	"go4pack/pkg/poolapi"
 	"os"
 	"os/signal"
 	"syscall"
@@ -50,6 +51,8 @@ func main() {
 	api := srv.Engine.Group("/api")
 	fileGroup := api.Group("/fileio")
 	fileio.RegisterRoutes(fileGroup)
+	poolGroup := api.Group("/pool")
+	poolapi.RegisterRoutes(poolGroup)
 
 	if err := srv.Start(); err != nil {
 		logger.Fatal().Err(err).Msg("Failed to start server")

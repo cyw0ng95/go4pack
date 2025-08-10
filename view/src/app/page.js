@@ -33,6 +33,8 @@ export default function Home() {
   const [uploadSession, setUploadSession] = useState(null)
   const [previewFile, setPreviewFile] = useState(null)
   const [previewOpen, setPreviewOpen] = useState(false)
+  const [poolStats, setPoolStats] = useState(null)
+  const [poolLoading, setPoolLoading] = useState(false)
   const API_BASE = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:8080/api/fileio'
 
   const formatFileSize = (bytes) => {
@@ -62,6 +64,17 @@ export default function Home() {
       if (!r.ok) throw new Error(`stats failed ${r.status}`)
       const d = await r.json(); setStats(d)
     } catch (e) { handleErr(e) } finally { setStatsLoading(false) }
+  }, [API_BASE])
+
+  const fetchPool = useCallback(async () => {
+    setPoolLoading(true)
+    try {
+      const r = await fetch(`${API_BASE.replace('/fileio','')}/pool/stats`)
+      if (!r.ok) throw new Error('pool stats failed')
+      const d = await r.json()
+      setPoolStats(d.pool)
+    } catch(e){ /* ignore for now */ }
+    finally { setPoolLoading(false) }
   }, [API_BASE])
 
   // Helper: decide if batch multi-upload is beneficial
@@ -183,7 +196,7 @@ export default function Home() {
   const handleDrop = (e) => { e.preventDefault(); setDragOver(false); uploadFiles(e.dataTransfer.files) }
   const handleDrag = (e, over) => { e.preventDefault(); setDragOver(over) }
 
-  useEffect(()=>{ fetchFiles(); fetchStats() }, [fetchFiles, fetchStats])
+  useEffect(()=>{ fetchFiles(); fetchStats(); fetchPool(); const iv = setInterval(()=>{ fetchPool() }, 1000); return ()=> clearInterval(iv) }, [fetchFiles, fetchStats, fetchPool])
 
   const refreshAll = () => { fetchFiles(); fetchStats() }
 
@@ -233,7 +246,7 @@ export default function Home() {
             </Typography>
           </Box>
         )}
-        <StatsCards stats={stats} statsLoading={statsLoading} formatFileSize={formatFileSize} />
+        <StatsCards stats={stats} statsLoading={statsLoading} formatFileSize={formatFileSize} poolStats={poolStats} poolLoading={poolLoading} />
         <Grid container spacing={3} sx={{ mt:1 }}>
           <Grid item xs={12}>
             <Card variant='outlined'>
