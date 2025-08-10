@@ -20,19 +20,29 @@ type FileRecord struct {
 	CreatedAt       time.Time      `json:"created_at"`
 	UpdatedAt       time.Time      `json:"updated_at"`
 	DeletedAt       gorm.DeletedAt `gorm:"index" json:"-"`
-	ElfAnalysis     *string        `json:"elf_analysis,omitempty"` // ELF analysis JSON (if applicable)
+	AnalysisStatus  string         `json:"analysis_status" gorm:"default:pending"`
+	AnalysisError   *string        `json:"analysis_error,omitempty"`
+}
+
+// ElfAnalyzeCached stores cached ELF analysis JSON for a file
+type ElfAnalyzeCached struct {
+	ID        uint      `gorm:"primaryKey" json:"id"`
+	FileID    uint      `gorm:"uniqueIndex" json:"file_id"`
+	Data      string    `gorm:"type:text" json:"data"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // ensureDB migrates and returns db (always AutoMigrate to add new columns)
 func ensureDB() (*gorm.DB, error) {
 	if db := database.Get(); db != nil {
-		_ = db.AutoMigrate(&FileRecord{})
+		_ = db.AutoMigrate(&FileRecord{}, &ElfAnalyzeCached{})
 		return db, nil
 	}
-	db, err := database.Init("filemeta.db", &FileRecord{})
+	db, err := database.Init("filemeta.db", &FileRecord{}, &ElfAnalyzeCached{})
 	if err != nil {
 		return nil, err
 	}
-	_ = db.AutoMigrate(&FileRecord{})
+	_ = db.AutoMigrate(&FileRecord{}, &ElfAnalyzeCached{})
 	return db, nil
 }

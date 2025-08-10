@@ -193,11 +193,14 @@ export default function Home() {
         const r = await fetch(`${API_BASE}/meta/${file.id}`)
         if (r.ok) {
           const d = await r.json()
-          const full = d.file
-          file.elf_analysis = full.elf_analysis // mutate then trigger state copy
-          setFiles(fs => fs.map(x => x.id===file.id ? { ...x, elf_analysis: file.elf_analysis } : x))
+          // backend now returns top-level elf_analysis separate from file
+          const analysis = d.elf_analysis || d.file?.elf_analysis
+          if (analysis) {
+            file.elf_analysis = analysis
+            setFiles(fs => fs.map(x => x.id===file.id ? { ...x, elf_analysis: analysis } : x))
+          }
         }
-      } catch(_){}
+      } catch(_){ /* ignore */ }
     }
     setPreviewFile({ ...file })
     setPreviewOpen(true)

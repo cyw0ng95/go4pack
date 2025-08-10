@@ -8,6 +8,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	elfutil "go4pack/pkg/common/elf"
 	"go4pack/pkg/common/fs"
 	"go4pack/pkg/common/logger"
 )
@@ -25,7 +26,11 @@ func listHandler(c *gin.Context) {
 	}
 	resp := make([]gin.H, 0, len(files))
 	for _, f := range files {
-		resp = append(resp, gin.H{"id": f.ID, "filename": f.Filename, "size": f.Size, "compressed_size": f.CompressedSize, "compression_type": f.CompressionType, "md5": f.MD5, "mime": f.MIME, "created_at": f.CreatedAt, "updated_at": f.UpdatedAt, "is_elf": f.ElfAnalysis != nil})
+		isELF := f.AnalysisStatus == "pending" || f.AnalysisStatus == "error"
+		if f.AnalysisStatus == "done" {
+			isELF = true
+		}
+		resp = append(resp, gin.H{"id": f.ID, "filename": f.Filename, "size": f.Size, "compressed_size": f.CompressedSize, "compression_type": f.CompressionType, "md5": f.MD5, "mime": f.MIME, "created_at": f.CreatedAt, "updated_at": f.UpdatedAt, "is_elf": isELF, "analysis_status": f.AnalysisStatus})
 	}
 	logger.GetLogger().Info().Int("count", len(files)).Msg("files listed")
 	c.JSON(http.StatusOK, gin.H{"files": resp, "count": len(files)})
@@ -119,7 +124,47 @@ func metaHandler(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "file not found"})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"file": fr})
+
+	var cache ElfAnalyzeCached
+	cacheFound := false
+	if err := db.Where("file_id = ?", fr.ID).First(&cache).Error; err == nil {
+		cacheFound = true
+	}
+
+	// If not cached, attempt on-demand computation (idempotent) when status not error
+	if !cacheFound && fr.AnalysisStatus != "error" {
+		// Read file content via hashed storage
+		if fsys, ferr := fs.New(); ferr == nil {
+			if data, rerr := fsys.ReadObjectHashed(fr.MD5); rerr == nil {
+				if len(data) >= 4 && data[0] == 0x7f && data[1] == 'E' && data[2] == 'L' && data[3] == 'F' {
+					if analysisMap, aerr := elfutil.AnalyzeBytes(data); aerr == nil {
+						if b, mErr := json.Marshal(analysisMap); mErr == nil {
+							js := string(b)
+							cache = ElfAnalyzeCached{FileID: fr.ID, Data: js}
+							_ = db.Create(&cache).Error
+							// Update status if not already done
+							if fr.AnalysisStatus != "done" {
+								_ = db.Model(&FileRecord{}).Where("id = ?", fr.ID).Update("analysis_status", "done").Error
+								fr.AnalysisStatus = "done"
+							}
+							cacheFound = true
+						}
+					} else {
+						// mark error
+						msg := aerr.Error()
+						_ = db.Model(&FileRecord{}).Where("id = ?", fr.ID).Updates(map[string]any{"analysis_status": "error", "analysis_error": msg})
+						fr.AnalysisStatus = "error"
+					}
+				}
+			}
+		}
+	}
+
+	resp := gin.H{"file": fr}
+	if cacheFound {
+		resp["elf_analysis"] = json.RawMessage(cache.Data)
+	}
+	c.JSON(http.StatusOK, resp)
 }
 
 // Provide JSON raw marshal reuse (kept for consistency with former file)

@@ -6,15 +6,30 @@ import ExpandMoreIcon from '@mui/icons-material/ExpandMore'
 import ContentCopyIcon from '@mui/icons-material/ContentCopy'
 
 export function PreviewDialog({ open, file, onClose, API_BASE, isVideo, isPdf, isElf }) {
+  const status = file?.analysis_status
   const elfObj = (isElf(file) && file?.elf_analysis) ? safeParse(file.elf_analysis) : null
   const characteristics = elfObj?.characteristics || {}
-  const chips = buildChips(characteristics)
-
-  const copyAll = () => {
-    if (!elfObj) return
-    navigator.clipboard?.writeText(JSON.stringify(elfObj, null, 2))
+  const chips = elfObj ? buildChips(characteristics) : []
+  const copyAll = () => { if (!elfObj) return; navigator.clipboard?.writeText(JSON.stringify(elfObj, null, 2)) }
+  const renderElfContent = () => {
+    if (status === 'pending') return <Typography variant='body2' color='text.secondary'>Analysis in progress...</Typography>
+    if (status === 'error') return <Typography variant='body2' color='error'>Failed to analyze ELF.</Typography>
+    if (!elfObj) return <Typography variant='body2' color='text.secondary'>No ELF data.</Typography>
+    return (
+      <>
+        <Alert severity='info' sx={{ mb:1, display:'flex', alignItems:'center', justifyContent:'space-between' }}>
+          ELF Metadata
+          <Tooltip title='Copy JSON'>
+            <MIconButton size='small' onClick={copyAll} color='inherit'><ContentCopyIcon fontSize='inherit'/></MIconButton>
+          </Tooltip>
+        </Alert>
+        <Stack direction='row' spacing={1} flexWrap='wrap' sx={{ mb:1 }}>
+          {chips.map(c=> <Chip key={c.label} label={c.label} color={c.color} size='small' variant={c.variant||'filled'} />)}
+        </Stack>
+        <ElfAccordionView obj={elfObj} />
+      </>
+    )
   }
-
   return (
     <Dialog open={open} onClose={onClose} maxWidth='lg' fullWidth>
       <DialogTitle sx={{ pr:7 }}>
@@ -24,35 +39,15 @@ export function PreviewDialog({ open, file, onClose, API_BASE, isVideo, isPdf, i
       <DialogContent dividers sx={{ bgcolor: isElf(file)?'background.paper':'' }}>
         {isVideo(file) ? (
           <Box sx={{ aspectRatio:'16/9', width:'100%', bgcolor:'black' }}>
-            <video
-              key={file?.id}
-              controls
-              autoPlay
-              style={{ width:'100%', height:'100%', objectFit:'contain' }}
-              src={`${API_BASE}/download/${encodeURIComponent(file?.filename || '')}`}
-            />
+            <video key={file?.id} controls autoPlay style={{ width:'100%', height:'100%', objectFit:'contain' }} src={`${API_BASE}/download/${encodeURIComponent(file?.filename || '')}`} />
           </Box>
         ) : isPdf(file) ? (
           <Box sx={{ width:'100%', height:'80vh' }}>
-            <iframe
-              key={file?.id}
-              title={file?.filename}
-              style={{ border:0, width:'100%', height:'100%' }}
-              src={`${API_BASE}/download/${encodeURIComponent(file?.filename || '')}#toolbar=0`}
-            />
+            <iframe key={file?.id} title={file?.filename} style={{ border:0, width:'100%', height:'100%' }} src={`${API_BASE}/download/${encodeURIComponent(file?.filename || '')}#toolbar=0`} />
           </Box>
         ) : isElf(file) ? (
           <Box sx={{ width:'100%', maxHeight:'75vh', overflow:'auto', fontSize:13 }}>
-            <Alert severity='info' sx={{ mb:1, display:'flex', alignItems:'center', justifyContent:'space-between' }}>
-              ELF Metadata
-              <Tooltip title='Copy JSON'>
-                <MIconButton size='small' onClick={copyAll} color='inherit'><ContentCopyIcon fontSize='inherit'/></MIconButton>
-              </Tooltip>
-            </Alert>
-            <Stack direction='row' spacing={1} flexWrap='wrap' sx={{ mb:1 }}>
-              {chips.map(c=> <Chip key={c.label} label={c.label} color={c.color} size='small' variant={c.variant||'filled'} />)}
-            </Stack>
-            {elfObj ? <ElfAccordionView obj={elfObj} /> : 'No ELF data'}
+            {renderElfContent()}
           </Box>
         ) : (
           <Typography variant='body2' color='text.secondary'>No preview available.</Typography>
@@ -62,7 +57,12 @@ export function PreviewDialog({ open, file, onClose, API_BASE, isVideo, isPdf, i
   )
 }
 
-function safeParse(s){ try { return JSON.parse(s) } catch(_){ return null } }
+function safeParse(v){
+  if(!v) return null
+  if (typeof v === 'object') return v
+  if (typeof v === 'string') { try { return JSON.parse(v) } catch(_){ return null } }
+  return null
+}
 
 function buildChips(ch) {
   const chips = []

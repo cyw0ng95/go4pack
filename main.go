@@ -4,6 +4,7 @@ import (
 	"context"
 	"go4pack/pkg/common"
 	"go4pack/pkg/common/restful"
+	"go4pack/pkg/common/worker"
 	"go4pack/pkg/fileio"
 	"os"
 	"os/signal"
@@ -37,6 +38,11 @@ func main() {
 		panic(err)
 	}
 	logger.Info().Str("runtime_path", fsys.GetRuntimePath()).Str("objects_path", fsys.GetObjectsPath()).Msg("Runtime paths ready")
+
+	// Initialize worker pool (configurable later)
+	if err := worker.Init(8); err != nil {
+		logger.Error().Err(err).Msg("Worker pool init failed")
+	}
 
 	// Start REST server
 	srv := restful.NewServer(restful.WithAddress(":8080"))
