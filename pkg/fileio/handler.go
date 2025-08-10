@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -48,11 +49,15 @@ func ensureDB() (*gorm.DB, error) {
 func RegisterRoutes(rg *gin.RouterGroup) {
 	rg.POST("/upload", uploadHandler)
 	rg.GET("/download/:filename", downloadHandler)
+	// added by-md5 download route
+	rg.GET("/download/by-md5/:md5", downloadByMD5Handler)
 	rg.GET("/list", listHandler)
 	rg.GET("/stats", statsHandler)
 	rg.POST("/upload/multi", uploadMultiHandler)
 	rg.POST("/upload/stream", streamUploadHandler)
 }
+
+func isPreviewableMIME(m string) bool { return strings.HasPrefix(m, "video/") || m == "application/pdf" }
 
 func uploadHandler(c *gin.Context) {
 	fileHdr, header, err := c.Request.FormFile("file")
@@ -140,32 +145,42 @@ func downloadHandler(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "filesystem init failed"})
 		return
 	}
-
-	// Lookup metadata to find MD5
 	db, err := ensureDB()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "database init failed"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "db init failed"})
 		return
 	}
-	var rec FileRecord
-	if err := db.Where("filename = ?", filename).First(&rec).Error; err != nil {
+	var fr FileRecord
+	if err := db.Where("filename = ?", filename).First(&fr).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "file not found"})
 		return
 	}
-
-	data, err := fsys.ReadObjectHashed(rec.MD5)
-	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "file content not found"})
+	data, rErr := fsys.ReadObjectHashed(fr.MD5)
+	if rErr != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "read failed"})
 		return
 	}
+	// inline for previewable types
+	dispType := "attachment"
+	if isPreviewableMIME(fr.MIME) { dispType = "inline" }
+	c.Header("Content-Disposition", dispType+"; filename="+filename)
+	c.Header("Content-Length", strconv.FormatInt(fr.Size, 10))
+	c.Header("Content-Type", fr.MIME)
+	c.Writer.Write(data)
+}
 
-	originalSize := int64(len(data))
-	c.Header("Content-Disposition", "attachment; filename="+filename)
-	c.Header("Content-Length", strconv.FormatInt(originalSize, 10))
-	c.Header("Content-Type", rec.MIME)
-	c.Data(http.StatusOK, rec.MIME, data)
-
-	logger.GetLogger().Info().Str("filename", filename).Str("hash", rec.MD5).Int64("size", originalSize).Msg("file downloaded")
+func downloadByMD5Handler(c *gin.Context) {
+	md5v := c.Param("md5")
+	fsys, err := fs.New(); if err != nil { c.JSON(http.StatusInternalServerError, gin.H{"error":"filesystem init failed"}); return }
+	db, err := ensureDB(); if err != nil { c.JSON(http.StatusInternalServerError, gin.H{"error":"db init failed"}); return }
+	var fr FileRecord
+	if err := db.Where("md5 = ?", md5v).First(&fr).Error; err != nil { c.JSON(http.StatusNotFound, gin.H{"error":"file not found"}); return }
+	data, rErr := fsys.ReadObjectHashed(fr.MD5); if rErr != nil { c.JSON(http.StatusInternalServerError, gin.H{"error":"read failed"}); return }
+	dispType := "attachment"; if isPreviewableMIME(fr.MIME) { dispType = "inline" }
+	c.Header("Content-Disposition", dispType+"; filename="+fr.Filename)
+	c.Header("Content-Length", strconv.FormatInt(fr.Size, 10))
+	c.Header("Content-Type", fr.MIME)
+	c.Writer.Write(data)
 }
 
 func listHandler(c *gin.Context) {

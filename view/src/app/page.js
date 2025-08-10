@@ -12,6 +12,7 @@ import RefreshIcon from '@mui/icons-material/Refresh'
 import DownloadIcon from '@mui/icons-material/Download'
 import PlayArrowIcon from '@mui/icons-material/PlayArrow'
 import CloseIcon from '@mui/icons-material/Close'
+import PictureAsPdfIcon from '@mui/icons-material/PictureAsPdf'
 
 export default function Home() {
   const [files, setFiles] = useState([])
@@ -243,6 +244,8 @@ export default function Home() {
   const openPreview = (file) => { setPreviewFile(file); setPreviewOpen(true) }
   const closePreview = () => { setPreviewOpen(false); setPreviewFile(null) }
   const isVideo = (f) => !!f && typeof f.mime === 'string' && f.mime.startsWith('video/')
+  const isPdf = (f) => !!f && typeof f.mime === 'string' && f.mime === 'application/pdf'
+  const isPreviewable = (f) => isVideo(f) || isPdf(f)
 
   return (
     <Box sx={{ flexGrow:1, bgcolor:'background.default', minHeight:'100vh' }}>
@@ -370,13 +373,18 @@ export default function Home() {
                   <TableBody>
                     {files.map(f => (
                       <TableRow key={f.id} hover>
-                        <TableCell sx={{ cursor: isVideo(f)?'pointer':'default', color: isVideo(f)?'primary.main':'inherit' }} onClick={()=> isVideo(f)&&openPreview(f)}>{f.filename}</TableCell>
+                        <TableCell sx={{ cursor: isPreviewable(f)?'pointer':'default', color: isPreviewable(f)?'primary.main':'inherit' }} onClick={()=> isPreviewable(f)&&openPreview(f)}>{f.filename}</TableCell>
                         <TableCell>{formatFileSize(f.size)}</TableCell>
                         <TableCell>{formatDate(f.created_at)}</TableCell>
                         <TableCell align='right'>
                           {isVideo(f) && (
                             <IconButton size='small' color='secondary' onClick={()=>openPreview(f)} sx={{ mr:0.5 }}>
                               <PlayArrowIcon fontSize='inherit'/>
+                            </IconButton>
+                          )}
+                          {isPdf(f) && (
+                            <IconButton size='small' color='secondary' onClick={()=>openPreview(f)} sx={{ mr:0.5 }}>
+                              <PictureAsPdfIcon fontSize='inherit'/>
                             </IconButton>
                           )}
                           <IconButton size='small' color='primary' onClick={()=> window.open(`${API_BASE}/download/${encodeURIComponent(f.filename)}`,'_blank')}>
@@ -410,6 +418,15 @@ export default function Home() {
                 autoPlay
                 style={{ width:'100%', height:'100%', objectFit:'contain' }}
                 src={`${API_BASE}/download/${encodeURIComponent(previewFile?.filename || '')}`}
+              />
+            </Box>
+          ) : isPdf(previewFile) ? (
+            <Box sx={{ width:'100%', height:'80vh' }}>
+              <iframe
+                key={previewFile?.id}
+                title={previewFile?.filename}
+                style={{ border:0, width:'100%', height:'100%' }}
+                src={`${API_BASE}/download/${encodeURIComponent(previewFile?.filename || '')}#toolbar=0`}
               />
             </Box>
           ) : (
