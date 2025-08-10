@@ -45,7 +45,7 @@ export default function Home() {
   // const [pageSize,setPageSize] = useState(50)
   // const [total,setTotal] = useState(0)
   // const [pages,setPages] = useState(0)
-  const API_BASE = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:8080/api/fileio'
+  const API_BASE = process.env.NEXT_PUBLIC_API_BASE || 'http://127.0.0.1:8080/api/fileio'
 
   // Hooks integration
   const { error, showError, setShowError, handleErr } = useApi(API_BASE)
