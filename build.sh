@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # Build / test / run helper (inside dev container).
 # Usage:
-#   build.sh -h            Show help
-#   build.sh -t            Run tests with coverage (go mod vendor + go test)
-#   build.sh -r            Run application (go run ./)
-#   build.sh -t -r         Test then run
-#   build.sh -c            Clear .runtime (if present) before other actions (optional)
+#   build.sh                 Compile backend only (default if no flags)
+#   build.sh -t              Compile then run tests with coverage (go mod vendor + go test)
+#   build.sh -r              Compile then run application (uses compiled binary)
+#   build.sh -t -r           Compile, test, then run
+#   build.sh -c              Clear .runtime before other actions (optional)
 # Notes:
 #   Must be executed inside dev container (GO4PACK_ENV_TYPE=dev).
 
@@ -31,11 +31,6 @@ while getopts ":hctr" opt; do
 done
 shift $((OPTIND-1))
 
-# Show help if no action flags provided
-if [[ $DO_CLEAR -eq 0 && $DO_TEST -eq 0 && $DO_RUN -eq 0 ]]; then
-  usage
-fi
-
 in_container() {
   [[ -f "/.dockerenv" || -f "/run/.containerenv" ]]
 }
@@ -58,6 +53,12 @@ if [[ $DO_CLEAR -eq 1 ]]; then
   echo "[INFO] Clearing $RUNTIME_DIR" >&2
   rm -rf "$RUNTIME_DIR" || true
 fi
+
+compile_backend() {
+  echo "[INFO] Compiling backend -> $DEV_DIR/go4pack (verbose)" >&2
+  ( cd "$ROOT_DIR" && go build -v -o "$DEV_DIR/go4pack" ./ )
+  echo "[INFO] Backend binary size: $(stat -c %s "$DEV_DIR/go4pack" 2>/dev/null || echo '?') bytes" >&2
+}
 
 run_tests() {
   echo "[INFO] Ensuring vendored modules (go mod vendor)" >&2
@@ -93,9 +94,18 @@ run_app() {
   else
     echo "[WARN] No view/ directory; skipping frontend start" >&2
   fi
-  echo "[INFO] Running application (go run ./) — Ctrl+C to stop" >&2
-  ( cd "$ROOT_DIR" && exec go run ./ )
+  echo "[INFO] Running application ($DEV_DIR/go4pack) — Ctrl+C to stop" >&2
+  ( cd "$ROOT_DIR" && exec "$DEV_DIR/go4pack" )
 }
+
+# Always compile first
+compile_backend
+
+# If no flags supplied, only compile (default behavior)
+if [[ $DO_TEST -eq 0 && $DO_RUN -eq 0 ]]; then
+  echo "[INFO] Compile only (no actions requested)." >&2
+  exit 0
+fi
 
 [[ $DO_TEST -eq 1 ]] && run_tests
 [[ $DO_RUN  -eq 1 ]] && run_app
