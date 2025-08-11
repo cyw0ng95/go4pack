@@ -209,7 +209,8 @@ export default function Home() {
   const isElf = (f) => !!f && (f.is_elf || !!f.elf_analysis)
   const isText = (f) => !!f && typeof f.mime === 'string' && f.mime.startsWith('text/plain')
   const isGzip = (f) => !!f && typeof f.mime === 'string' && ['application/gzip','application/x-gzip'].includes(f.mime)
-  const isPreviewable = (f) => isVideo(f) || isPdf(f) || isElf(f) || isText(f) || isGzip(f)
+  const isRpm = (f) => !!f && typeof f.mime === 'string' && ['application/x-rpm','application/rpm'].includes(f.mime)
+  const isPreviewable = (f) => isVideo(f) || isPdf(f) || isElf(f) || isText(f) || isGzip(f) || isRpm(f)
 
   const openPreview = async (file) => {
     if (!file) return
@@ -220,6 +221,9 @@ export default function Home() {
     // Fetch GZIP analysis when mime indicates gzip (or already has gzip analysis pending)
     if (isGzip(file) && !file.gzip_analysis) {
       await fetchAnalysis(file, 'gzip', 'gzip_analysis')
+    }
+    if (isRpm(file) && !file.rpm_analysis) {
+      await fetchAnalysis(file, 'rpm', 'rpm_analysis')
     }
     setPreviewFile({ ...file })
     setPreviewOpen(true)
@@ -285,7 +289,7 @@ export default function Home() {
           </Grid>
         </Grid>
       </Container>
-      <PreviewDialog open={previewOpen} file={previewFile} onClose={closePreview} API_BASE={API_BASE} isVideo={isVideo} isPdf={isPdf} isElf={isElf} isText={isText} isGzip={isGzip} />
+      <PreviewDialog open={previewOpen} file={previewFile} onClose={closePreview} API_BASE={API_BASE} isVideo={isVideo} isPdf={isPdf} isElf={isElf} isText={isText} isGzip={isGzip} isRpm={isRpm} />
       <Snackbar open={showError} autoHideDuration={4000} onClose={()=>setShowError(false)} anchorOrigin={{ vertical:'bottom', horizontal:'right' }}>
         <Alert severity='error' onClose={()=>setShowError(false)} variant='filled' sx={{ fontSize:12 }}>
           {error}

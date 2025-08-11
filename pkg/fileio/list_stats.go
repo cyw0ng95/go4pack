@@ -50,12 +50,16 @@ func listHandler(c *gin.Context) {
 		// Consider file ELF only if analysis was completed or attempted (done or error)
 		isELF := f.MIME == "application/x-sharedlib"
 		isGzip := (f.MIME == "application/gzip" || f.MIME == "application/x-gzip")
+		isRPM := f.MIME == "application/x-rpm" || f.MIME == "application/rpm"
 		avail := []string{}
 		if isELF {
 			avail = append(avail, "elf")
 		}
 		if isGzip {
 			avail = append(avail, "gzip")
+		}
+		if isRPM {
+			avail = append(avail, "rpm")
 		}
 		resp = append(resp, gin.H{
 			"id":                 f.ID,
@@ -69,6 +73,7 @@ func listHandler(c *gin.Context) {
 			"updated_at":         f.UpdatedAt,
 			"is_elf":             isELF,
 			"is_gzip":            isGzip,
+			"is_rpm":            isRPM,
 			"analysis_status":    f.AnalysisStatus,
 			"available_analysis": avail, // NEW
 		})
@@ -167,13 +172,14 @@ func metaHandler(c *gin.Context) {
 		return
 	}
 
-	reqType := c.Query("type") // "", "elf", "gzip"
-	if reqType != "" && reqType != "elf" && reqType != "gzip" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid type (expected elf|gzip)"})
+	reqType := c.Query("type") // "", "elf", "gzip", "rpm"
+	if reqType != "" && reqType != "elf" && reqType != "gzip" && reqType != "rpm" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid type (expected elf|gzip|rpm)"})
 		return
 	}
 
 	isGzip := fr.MIME == "application/gzip" || fr.MIME == "application/x-gzip"
+	isRPM := fr.MIME == "application/x-rpm" || fr.MIME == "application/rpm"
 	// We consider ELF if status not none (pending/done/error) or magic can be confirmed on demand
 	isELFStatus := fr.AnalysisStatus == "pending" || fr.AnalysisStatus == "done" || fr.AnalysisStatus == "error"
 
@@ -184,6 +190,8 @@ func metaHandler(c *gin.Context) {
 	} else {
 		if isGzip {
 			target = "gzip"
+		} else if isRPM {
+			target = "rpm"
 		} else if isELFStatus {
 			target = "elf"
 		}
@@ -207,6 +215,10 @@ func metaHandler(c *gin.Context) {
 			return
 		}
 	}
+	if reqType == "rpm" && !isRPM {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "file is not RPM"})
+		return
+	}
 
 	resp := gin.H{"file": fr}
 
@@ -215,8 +227,11 @@ func metaHandler(c *gin.Context) {
 	if fr.AnalysisStatus == "pending" || fr.AnalysisStatus == "done" || fr.AnalysisStatus == "error" {
 		avail = append(avail, "elf")
 	}
-	if fr.MIME == "application/gzip" || fr.MIME == "application/x-gzip" {
+	if isGzip {
 		avail = append(avail, "gzip")
+	}
+	if isRPM {
+		avail = append(avail, "rpm")
 	}
 	resp["available_analysis"] = avail
 
@@ -265,6 +280,15 @@ func metaHandler(c *gin.Context) {
 			resp["analysis"] = json.RawMessage(gcache.Data)
 		} else {
 			resp["analysis_type"] = "gzip"
+			resp["analysis"] = nil
+		}
+	case "rpm":
+		var rcache RpmAnalyzeCached
+		if err := db.Where("file_id = ?", fr.ID).First(&rcache).Error; err == nil {
+			resp["analysis_type"] = "rpm"
+			resp["analysis"] = json.RawMessage(rcache.Data)
+		} else {
+			resp["analysis_type"] = "rpm"
 			resp["analysis"] = nil
 		}
 	default:

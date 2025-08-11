@@ -42,16 +42,25 @@ type GzipAnalyzeCached struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
+// RpmAnalyzeCached stores cached RPM header analysis JSON
+type RpmAnalyzeCached struct {
+	ID        uint      `gorm:"primaryKey" json:"id"`
+	FileID    uint      `gorm:"uniqueIndex" json:"file_id"`
+	Data      string    `gorm:"type:text" json:"data"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
 // ensureDB migrates and returns db (always AutoMigrate to add new columns)
 func ensureDB() (*gorm.DB, error) {
 	if db := database.Get(); db != nil {
-		_ = db.AutoMigrate(&FileRecord{}, &ElfAnalyzeCached{}, &GzipAnalyzeCached{})
+		_ = db.AutoMigrate(&FileRecord{}, &ElfAnalyzeCached{}, &GzipAnalyzeCached{}, &RpmAnalyzeCached{})
 		return db, nil
 	}
-	db, err := database.Init("filemeta.db", &FileRecord{}, &ElfAnalyzeCached{}, &GzipAnalyzeCached{})
+	db, err := database.Init("filemeta.db", &FileRecord{}, &ElfAnalyzeCached{}, &GzipAnalyzeCached{}, &RpmAnalyzeCached{})
 	if err != nil {
 		return nil, err
 	}
-	_ = db.AutoMigrate(&FileRecord{}, &ElfAnalyzeCached{}, &GzipAnalyzeCached{})
+	_ = db.AutoMigrate(&FileRecord{}, &ElfAnalyzeCached{}, &GzipAnalyzeCached{}, &RpmAnalyzeCached{})
 	return db, nil
 }

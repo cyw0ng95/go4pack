@@ -84,6 +84,15 @@ func uploadHandler(c *gin.Context) {
 		}
 		scheduleGzipAnalysis(rec.ID, data)
 	}
+	// RPM detection (common mimetypes)
+	if mimeType == "application/x-rpm" || mimeType == "application/rpm" {
+		if rec.AnalysisStatus == "none" && dbErr == nil {
+			// mark pending for uniform status usage
+			db.Model(&FileRecord{}).Where("id = ?", rec.ID).Update("analysis_status", "pending")
+			rec.AnalysisStatus = "pending"
+		}
+		scheduleRpmAnalysis(rec.ID, data)
+	}
 
 	logger.GetLogger().Info().
 		Str("filename", header.Filename).
@@ -220,6 +229,13 @@ func uploadMultiHandler(c *gin.Context) {
 						res.AnalysisStatus = "pending"
 					}
 					scheduleGzipAnalysis(rec.ID, data)
+				}
+				if res.MIME == "application/x-rpm" || res.MIME == "application/rpm" {
+					if res.AnalysisStatus == "none" {
+						db.Model(&FileRecord{}).Where("id = ?", rec.ID).Update("analysis_status", "pending")
+						res.AnalysisStatus = "pending"
+					}
+					scheduleRpmAnalysis(rec.ID, data)
 				}
 			}
 

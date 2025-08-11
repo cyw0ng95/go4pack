@@ -6,13 +6,14 @@ import ExpandMoreIcon from '@mui/icons-material/ExpandMore'
 import ContentCopyIcon from '@mui/icons-material/ContentCopy'
 import DescriptionIcon from '@mui/icons-material/Description'
 
-export function PreviewDialog({ open, file, onClose, API_BASE, isVideo, isPdf, isElf, isText, isGzip }) {
+export function PreviewDialog({ open, file, onClose, API_BASE, isVideo, isPdf, isElf, isText, isGzip, isRpm }) {
   const status = file?.analysis_status
   const elfObj = (isElf(file) && file?.elf_analysis) ? safeParse(file.elf_analysis) : null
   const gzipObj = (isGzip && isGzip(file) && file?.gzip_analysis) ? safeParse(file.gzip_analysis) : null
+  const rpmObj = (isRpm && isRpm(file) && file?.rpm_analysis) ? safeParse(file.rpm_analysis) : null
   const characteristics = elfObj?.characteristics || {}
   const chips = elfObj ? buildChips(characteristics) : []
-  const copyAll = () => { if (elfObj) navigator.clipboard?.writeText(JSON.stringify(elfObj, null, 2)); else if (gzipObj) navigator.clipboard?.writeText(JSON.stringify(gzipObj, null, 2)) }
+  const copyAll = () => { if (elfObj) navigator.clipboard?.writeText(JSON.stringify(elfObj, null, 2)); else if (gzipObj) navigator.clipboard?.writeText(JSON.stringify(gzipObj, null, 2)); else if (rpmObj) navigator.clipboard?.writeText(JSON.stringify(rpmObj, null, 2)) }
   const renderElfContent = () => {
     if (status === 'pending') return <Typography variant='body2' color='text.secondary'>Analysis in progress...</Typography>
     if (status === 'error') return <Typography variant='body2' color='error'>Failed to analyze ELF.</Typography>
@@ -72,6 +73,24 @@ export function PreviewDialog({ open, file, onClose, API_BASE, isVideo, isPdf, i
       </>
     )
   }
+  const renderRpmContent = () => {
+    if (!rpmObj) return <Typography variant='body2' color='text.secondary'>No RPM data.</Typography>
+    const kv = { name:rpmObj.name, version:rpmObj.version, release:rpmObj.release, arch:rpmObj.arch, license:rpmObj.license, summary:rpmObj.summary, payload_format: rpmObj.payload_format, payload_compressor: rpmObj.payload_compressor }
+    return (
+      <>
+        <Alert severity='info' sx={{ mb:1, display:'flex', alignItems:'center', justifyContent:'space-between' }}>
+          RPM Metadata
+          <Tooltip title='Copy JSON'>
+            <MIconButton size='small' onClick={copyAll} color='inherit'><ContentCopyIcon fontSize='inherit'/></MIconButton>
+          </Tooltip>
+        </Alert>
+        <KVTable data={kv} />
+        <Box sx={{ mt:1 }}>
+          <PreJSON data={rpmObj} />
+        </Box>
+      </>
+    )
+  }
   return (
     <Dialog open={open} onClose={onClose} maxWidth='lg' fullWidth>
       <DialogTitle sx={{ pr:7 }}>
@@ -98,6 +117,10 @@ export function PreviewDialog({ open, file, onClose, API_BASE, isVideo, isPdf, i
         ) : (isGzip && isGzip(file)) ? (
           <Box sx={{ width:'100%', maxHeight:'75vh', overflow:'auto', fontSize:13 }}>
             {renderGzipContent()}
+          </Box>
+        ) : (isRpm && isRpm(file)) ? (
+          <Box sx={{ width:'100%', maxHeight:'75vh', overflow:'auto', fontSize:13 }}>
+            {renderRpmContent()}
           </Box>
         ) : (
           <Typography variant='body2' color='text.secondary'>No preview available.</Typography>
