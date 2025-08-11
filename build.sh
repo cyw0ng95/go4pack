@@ -55,17 +55,68 @@ if [[ $DO_CLEAR -eq 1 ]]; then
 fi
 
 compile_backend() {
-  echo "[INFO] Compiling backend commands -> $DEV_DIR" >&2
-  ( cd "$ROOT_DIR" && go build -v -o "$DEV_DIR/go4pack" ./cmd/go4pack )
-  # Future: build other binaries in cmd/*
-  for d in $(find cmd -mindepth 1 -maxdepth 1 -type d 2>/dev/null); do
-    name=$(basename "$d")
-    if [[ "$d" != "cmd/go4pack" ]]; then
-      echo "[INFO] Building $name" >&2
-      go build -v -o "$DEV_DIR/$name" "./$d" || true
+  echo "[INFO] Compiling backend commands in parallel -> $DEV_DIR" >&2
+  local CMD_ROOT="$ROOT_DIR/cmd"
+  if [[ ! -d "$CMD_ROOT" ]]; then
+    echo "[WARN] No cmd directory found" >&2
+    return 0
+  fi
+  mapfile -t CMD_DIRS < <(find "$CMD_ROOT" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort)
+  if [[ ${#CMD_DIRS[@]} -eq 0 ]]; then
+    echo "[WARN] No command subdirectories under cmd/" >&2
+    return 0
+  fi
+  mkdir -p "$DEV_DIR/build_logs"
+  local pids=()
+  for d in "${CMD_DIRS[@]}"; do
+    local name="$(basename "$d")"
+    (
+      set -e
+      cd "$ROOT_DIR"
+      echo "[BUILD $name] start" >&2
+      go build -o "$DEV_DIR/$name" "./cmd/$name" 2>&1
+      echo "[BUILD $name] done size=$(stat -c %s "$DEV_DIR/$name" 2>/dev/null || echo '?')" >&2
+    ) >"$DEV_DIR/build_logs/$name.log" 2>&1 &
+    pids+=("$!:${name}")
+  done
+  local fail=0
+  for pn in "${pids[@]}"; do
+    local pid="${pn%%:*}"; local name="${pn##*:}"
+    if ! wait "$pid"; then
+      echo "[ERROR] Build failed for $name" >&2
+      sed 's/^/  /' "$DEV_DIR/build_logs/$name.log" >&2 || true
+      fail=1
+    else
+      echo "[INFO] Built $name" >&2
     fi
   done
-  echo "[INFO] go4pack binary size: $(stat -c %s "$DEV_DIR/go4pack" 2>/dev/null || echo '?') bytes" >&2
+  # Report sizes of all successfully built binaries
+  echo "[INFO] Built binary sizes:" >&2
+  local total=0
+  for d in "${CMD_DIRS[@]}"; do
+    local name="$(basename "$d")"
+    if [[ -f "$DEV_DIR/$name" ]]; then
+      local size
+      size=$(stat -c %s "$DEV_DIR/$name" 2>/dev/null || echo '?')
+      if [[ $size != '?' ]]; then total=$((total + size)); fi
+      if [[ $size == '?' ]]; then
+        printf '[INFO]   %-12s %s bytes\n' "$name" "$size" >&2
+      else
+        local mb
+        mb=$(awk -v s="$size" 'BEGIN{printf "%.2f", s/1024/1024}')
+        printf '[INFO]   %-12s %s bytes (%s MB)\n' "$name" "$size" "$mb" >&2
+      fi
+    fi
+  done
+  if [[ $total -gt 0 ]]; then
+    local total_mb
+    total_mb=$(awk -v s="$total" 'BEGIN{printf "%.2f", s/1024/1024}')
+    echo "[INFO]   TOTAL        $total bytes (${total_mb} MB)" >&2
+  fi
+  if [[ $fail -eq 1 ]]; then
+    echo "[ERROR] One or more builds failed" >&2
+    return 1
+  fi
 }
 
 run_tests() {
