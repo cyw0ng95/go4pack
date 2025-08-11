@@ -89,7 +89,7 @@ func parseRPMHeaders(data []byte) (map[string]any, error) {
 	_ = nIdx
 	_ = hSz // unused currently
 	// main header
-	nIdx, hSz, next, err = readHeader(off)
+	nIdx, hSz, _, err = readHeader(off)
 	if err != nil {
 		return nil, fmt.Errorf("main header: %w", err)
 	}
