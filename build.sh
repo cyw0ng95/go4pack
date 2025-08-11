@@ -55,9 +55,17 @@ if [[ $DO_CLEAR -eq 1 ]]; then
 fi
 
 compile_backend() {
-  echo "[INFO] Compiling backend -> $DEV_DIR/go4pack (verbose)" >&2
-  ( cd "$ROOT_DIR" && go build -v -o "$DEV_DIR/go4pack" ./ )
-  echo "[INFO] Backend binary size: $(stat -c %s "$DEV_DIR/go4pack" 2>/dev/null || echo '?') bytes" >&2
+  echo "[INFO] Compiling backend commands -> $DEV_DIR" >&2
+  ( cd "$ROOT_DIR" && go build -v -o "$DEV_DIR/go4pack" ./cmd/go4pack )
+  # Future: build other binaries in cmd/*
+  for d in $(find cmd -mindepth 1 -maxdepth 1 -type d 2>/dev/null); do
+    name=$(basename "$d")
+    if [[ "$d" != "cmd/go4pack" ]]; then
+      echo "[INFO] Building $name" >&2
+      go build -v -o "$DEV_DIR/$name" "./$d" || true
+    fi
+  done
+  echo "[INFO] go4pack binary size: $(stat -c %s "$DEV_DIR/go4pack" 2>/dev/null || echo '?') bytes" >&2
 }
 
 run_tests() {
