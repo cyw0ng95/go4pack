@@ -73,7 +73,7 @@ func listHandler(c *gin.Context) {
 			"updated_at":         f.UpdatedAt,
 			"is_elf":             isELF,
 			"is_gzip":            isGzip,
-			"is_rpm":            isRPM,
+			"is_rpm":             isRPM,
 			"analysis_status":    f.AnalysisStatus,
 			"available_analysis": avail, // NEW
 		})
