@@ -12,11 +12,12 @@ import (
 	"go4pack/pkg/common/worker"
 	"go4pack/pkg/fileio"
 	"go4pack/pkg/poolapi"
+	"go4pack/pkg/process"
+	"go4pack/pkg/rpc"
 )
 
 // RunAPI starts the API server (former main) so we can have multiple commands.
 func RunAPI() {
-	// Initialize config and logger
 	if err := common.Init(); err != nil {
 		panic(err)
 	}
@@ -37,6 +38,17 @@ func RunAPI() {
 		logger.Error().Err(err).Msg("Worker pool init failed")
 	}
 
+	// Initialize process model
+	proc := process.New()
+	proc.Start()
+	// Example RPC handlers
+	_ = proc.Register("system.ping", func(ctx context.Context, m rpc.Message) (any, error) {
+		return map[string]any{"pong": true, "ts": time.Now().UnixMilli()}, nil
+	})
+	_ = proc.Register("system.uptime", func(ctx context.Context, m rpc.Message) (any, error) {
+		return map[string]any{"uptime_ms": proc.Uptime().Milliseconds()}, nil
+	})
+
 	srv := restful.NewServer(restful.WithAddress(":8080"))
 	api := srv.Engine.Group("/api")
 	fileGroup := api.Group("/fileio")
@@ -52,6 +64,7 @@ func RunAPI() {
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 	logger.Info().Msg("Shutting down server...")
+	proc.Stop()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := srv.Shutdown(ctx); err != nil {
