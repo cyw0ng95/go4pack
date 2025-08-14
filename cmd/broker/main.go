@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"log"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -17,6 +18,18 @@ import (
 // and exposes simple RPC-style handlers (future transport TBD).
 func main() {
 	proc := process.New()
+
+	// Prepare log file in same directory as executable
+	exe, _ := os.Executable()
+	dir := filepathDir(exe)
+	logPath := dir + "/broker.log"
+	lf, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if err != nil {
+		// fallback to stdout
+		lf = os.Stdout
+	}
+	logger := log.New(lf, "broker ", log.LstdFlags|log.Lmicroseconds)
+	logger.Printf("starting broker (log=%s)", logPath)
 
 	var mu sync.Mutex
 	var child *exec.Cmd
@@ -44,20 +57,25 @@ func main() {
 			return nil, err
 		}
 		cmd := exec.Command(target, args...)
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
+		cmd.Stdout = lf
+		cmd.Stderr = lf
 		cmd.Stdin = os.Stdin
+		logger.Printf("starting child: %s pid=? args=%v", target, args)
 		if err := cmd.Start(); err != nil {
+			logger.Printf("child start error: %v", err)
 			return nil, err
 		}
+		logger.Printf("child started pid=%d", cmd.Process.Pid)
 		child = cmd
 		go func() {
 			err := cmd.Wait()
 			mu.Lock()
 			if err != nil {
 				childExit = &rpc.RPCError{Code: "EXIT_ERROR", Message: err.Error()}
+				logger.Printf("child exited (error) pid=%d err=%v", cmd.Process.Pid, err)
 			} else if cmd.ProcessState != nil {
 				childExit = &rpc.RPCError{Code: "EXITED", Message: cmd.ProcessState.String()}
+				logger.Printf("child exited pid=%d state=%s", cmd.Process.Pid, cmd.ProcessState.String())
 			}
 			mu.Unlock()
 		}()
@@ -70,7 +88,9 @@ func main() {
 		if child == nil || child.Process == nil || child.ProcessState != nil {
 			return map[string]any{"status": "not_running"}, nil
 		}
+		logger.Printf("sending SIGTERM to child pid=%d", child.Process.Pid)
 		if err := child.Process.Signal(syscall.SIGTERM); err != nil {
+			logger.Printf("signal error: %v", err)
 			return nil, err
 		}
 		return map[string]any{"status": "stopping"}, nil
@@ -122,6 +142,7 @@ func main() {
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
 	for {
 		sig := <-sigCh
+		logger.Printf("received signal: %s", sig.String())
 		if sig == syscall.SIGHUP {
 			// Future: reload logic
 			continue
@@ -136,6 +157,7 @@ func main() {
 			break
 		}
 	}
+	logger.Printf("broker shutting down")
 	// Allow child to exit gracefully
 	time.Sleep(200 * time.Millisecond)
 	proc.Stop()
@@ -144,6 +166,7 @@ func main() {
 	mu.Lock()
 	if child != nil && child.ProcessState != nil {
 		if ws, ok := child.ProcessState.Sys().(syscall.WaitStatus); ok {
+			logger.Printf("exiting with child status=%d", ws.ExitStatus())
 			os.Exit(ws.ExitStatus())
 		}
 	}
